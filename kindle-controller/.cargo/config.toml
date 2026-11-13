@@ -1,0 +1,9 @@
+# The Kindle Paperwhite 10th gen (FW 5.16.4) has an ARMv7 CPU with hard-float userland.
+# We build a fully static musl binary, so it doesn't depend on the Kindle's old glibc.
+# Rust ships the musl libc and CRT objects for this target, so rust-lld is the only
+# linker needed: no ARM cross toolchain required, even on Windows.
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+
+[alias]
+kindle = "build --release --target armv7-unknown-linux-musleabihf"

@@ -1,0 +1,59 @@
+Ref	Name in README	Value	Footprint
+J1	J_MOD	To relay module	TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal
+J2	J_TAB	To tablet cable	TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal
+J3	J_PROG	PROG	Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical
+R1	R_AUX	10k (AUX pull-up to 5V_AUX, always fitted)	Resistor_SMD:R_0603_1608Metric
+D1	D_TVS	SMBJ30A	Diode_SMD:D_SMB
+R2	R_TX	3.3R pulse-rated	Resistor_SMD:R_1206_3216Metric
+Q1	Q_TX	AO3422	Package_TO_SOT_SMD:SOT-23
+C1	C_G	100nF	Capacitor_SMD:C_0603_1608Metric
+R3	R_G	47R	Resistor_SMD:R_0603_1608Metric
+R4	R_GD	10k	Resistor_SMD:R_0603_1608Metric
+D2	D_IN	SS16	Diode_SMD:D_SMA
+R5	R_S	6.2R	Resistor_SMD:R_0805_2012Metric
+Q2	Q_PASS	BCP53-16	Package_TO_SOT_SMD:SOT-223-3_TabPin2
+Q3	Q_SENSE	MMBT3906	Package_TO_SOT_SMD:SOT-23
+R6	R_B	10k	Resistor_SMD:R_0603_1608Metric
+C2	C_RES1	1000uF 63V	Capacitor_THT:CP_Radial_D16.0mm_P7.50mm
+C3	C_RES2	1000uF 63V	Capacitor_THT:CP_Radial_D16.0mm_P7.50mm
+C4	C_IN	2.2uF 50V X7R	Capacitor_SMD:C_1206_3216Metric
+R7	R_EN1	1M 1%	Resistor_SMD:R_0603_1608Metric
+R8	R_EN2	113k 1%	Resistor_SMD:R_0603_1608Metric
+R9	R_VS1	150k 1%	Resistor_SMD:R_0603_1608Metric
+R10	R_VS2	10k 1%	Resistor_SMD:R_0603_1608Metric
+C5	C_VS	100nF	Capacitor_SMD:C_0603_1608Metric
+U1	U_BUCK	LMR51606YDBVR	Package_TO_SOT_SMD:SOT-23-6
+C6	C_CB	100nF	Capacitor_SMD:C_0603_1608Metric
+L1	L1	10uH >=1A	Inductor_SMD:L_Bourns-SRN4018
+R11	R_FBT	69.8k 1%	Resistor_SMD:R_0603_1608Metric
+R12	R_FBB	22.1k 1%	Resistor_SMD:R_0603_1608Metric
+C7	C_OUT1	22uF 25V X7R	Capacitor_SMD:C_0805_2012Metric
+C8	C_OUT2	22uF 25V X7R	Capacitor_SMD:C_0805_2012Metric
+C9	C_OUT3	100uF 10V	Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B
+U2	U_ESP	ESP32-C3-WROOM-02	PCM_Espressif:ESP32-C3-WROOM-02
+C10	C_D1	10uF	Capacitor_SMD:C_0805_2012Metric
+C11	C_D2	100nF	Capacitor_SMD:C_0603_1608Metric
+R13	R_EN	10k	Resistor_SMD:R_0603_1608Metric
+C12	C_EN	1uF	Capacitor_SMD:C_0603_1608Metric
+R14	R_IO2	10k	Resistor_SMD:R_0603_1608Metric
+R15	R_IO8	10k	Resistor_SMD:R_0603_1608Metric
+R16	R_LED	1k	Resistor_SMD:R_0603_1608Metric
+D3	LED1	Red	LED_SMD:LED_0603_1608Metric
+R17	R_S2	7.5R	Resistor_SMD:R_0805_2012Metric
+Q4	Q_PASS2	BCP53-16	Package_TO_SOT_SMD:SOT-223-3_TabPin2
+Q5	Q_SENSE2	MMBT3906	Package_TO_SOT_SMD:SOT-23
+R18	R_BE2	47k	Resistor_SMD:R_0603_1608Metric
+R19	R_B2	10k	Resistor_SMD:R_0603_1608Metric
+Q6	Q_EN	MMBT3904	Package_TO_SOT_SMD:SOT-23
+R20	R_ENB	10k	Resistor_SMD:R_0603_1608Metric
+R21	R_ENBD	100k	Resistor_SMD:R_0603_1608Metric
+D4	D_TVS2	SMBJ24A	Diode_SMD:D_SMB
+C13	C_TAB	100nF	Capacitor_SMD:C_0603_1608Metric
+R22	R_TS1	150k 1%	Resistor_SMD:R_0603_1608Metric
+R23	R_TS2	10k 1%	Resistor_SMD:R_0603_1608Metric
+C14	C_TS	100nF	Capacitor_SMD:C_0603_1608Metric
+U3	U_5V	LP2950CDT-5.0	Package_TO_SOT_SMD:TO-252-2
+C15	C_5V	2.2uF 25V X7R	Capacitor_SMD:C_0805_2012Metric
+R24	R_AX1	330k 1%	Resistor_SMD:R_0603_1608Metric
+R25	R_AX2	100k 1%	Resistor_SMD:R_0603_1608Metric
+C16	C_AX	10nF	Capacitor_SMD:C_0603_1608Metric

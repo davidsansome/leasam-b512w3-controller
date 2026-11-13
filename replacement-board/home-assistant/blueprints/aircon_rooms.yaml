@@ -1,0 +1,178 @@
+blueprint:
+  name: Aircon rooms
+  description: >-
+    Tells the aircon controller (the ESP32 replacement wall pad) which rooms it heats and
+    cools, and keeps it up to date with their temperatures. Its thermostat uses the average
+    of these rooms, or one of them chosen with the Aircon's "Thermostat room" select.
+
+
+    Pick a temperature sensor for each room you want; leave the rest empty. A room's name
+    defaults to its sensor's area. Temperatures are sent whenever a sensor changes and every
+    minute; the controller stops using a reading that's 5 minutes old.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    aircon:
+      name: Aircon
+      description: The aircon controller device (added by MQTT discovery).
+      selector:
+        device:
+          filter:
+            - integration: mqtt
+              model: Leasam B512W3 replacement
+            - integration: mqtt
+              model: Leasam B512W3 replacement (breadboard)
+    room_1:
+      name: Room 1
+      input:
+        room_1_sensor:
+          name: Room 1 sensor
+          default: []
+          selector:
+            entity:
+              filter:
+                domain: sensor
+                device_class: temperature
+        room_1_name:
+          name: Room 1 name
+          description: Leave empty to use the sensor's area.
+          default: ""
+          selector:
+            text:
+    room_2:
+      name: Room 2
+      input:
+        room_2_sensor:
+          name: Room 2 sensor
+          default: []
+          selector:
+            entity:
+              filter:
+                domain: sensor
+                device_class: temperature
+        room_2_name:
+          name: Room 2 name
+          description: Leave empty to use the sensor's area.
+          default: ""
+          selector:
+            text:
+    room_3:
+      name: Room 3
+      collapsed: true
+      input:
+        room_3_sensor:
+          name: Room 3 sensor
+          default: []
+          selector:
+            entity:
+              filter:
+                domain: sensor
+                device_class: temperature
+        room_3_name:
+          name: Room 3 name
+          description: Leave empty to use the sensor's area.
+          default: ""
+          selector:
+            text:
+    room_4:
+      name: Room 4
+      collapsed: true
+      input:
+        room_4_sensor:
+          name: Room 4 sensor
+          default: []
+          selector:
+            entity:
+              filter:
+                domain: sensor
+                device_class: temperature
+        room_4_name:
+          name: Room 4 name
+          description: Leave empty to use the sensor's area.
+          default: ""
+          selector:
+            text:
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: state
+    entity_id: !input room_1_sensor
+  - trigger: state
+    entity_id: !input room_2_sensor
+  - trigger: state
+    entity_id: !input room_3_sensor
+  - trigger: state
+    entity_id: !input room_4_sensor
+  # A heartbeat, so a steady sensor still counts as fresh, and the room list reaches a
+  # controller that was offline when it changed.
+  - trigger: time_pattern
+    minutes: /1
+  - trigger: homeassistant
+    event: start
+
+variables:
+  aircon: !input aircon
+  inputs:
+    - [!input room_1_name, !input room_1_sensor]
+    - [!input room_2_name, !input room_2_sensor]
+    - [!input room_3_name, !input room_3_sensor]
+    - [!input room_4_name, !input room_4_sensor]
+  # The controller's MQTT node id, e.g. aircon_3c6105145424: its topics start with it.
+  node: >-
+    {%- set ns = namespace(id='') -%}
+    {%- for i in device_attr(aircon, 'identifiers') or [] -%}
+      {%- if i[0] == 'mqtt' -%}{%- set ns.id = i[1] -%}{%- endif -%}
+    {%- endfor -%}
+    {{- ns.id -}}
+  # Rooms in order; a room without a sensor is unused (empty name and sensor).
+  rooms: >-
+    {%- set ns = namespace(rooms=[]) -%}
+    {%- for name, sensor in inputs -%}
+      {%- set sensor = sensor if sensor is string else '' -%}
+      {%- set name = (name or '') | trim -%}
+      {%- if sensor and not name -%}
+        {%- set name = area_name(sensor) or state_attr(sensor, 'friendly_name') or sensor -%}
+      {%- endif -%}
+      {%- set ns.rooms = ns.rooms + [{'name': name if sensor else '', 'sensor': sensor}] -%}
+    {%- endfor -%}
+    {{- ns.rooms -}}
+
+conditions:
+  - condition: template
+    value_template: "{{ node != '' }}"
+
+actions:
+  - repeat:
+      for_each: "{{ range(rooms | count) | list }}"
+      sequence:
+        - variables:
+            room: "{{ rooms[repeat.item] }}"
+            base: "{{ node }}/room/{{ repeat.item + 1 }}"
+        # Retained, so a controller that restarts gets them straight away. An empty name
+        # (room unused) clears the retained message; the controller still sees it.
+        - action: mqtt.publish
+          data:
+            topic: "{{ base }}/name"
+            payload: "{{ room.name }}"
+            retain: true
+        - action: mqtt.publish
+          data:
+            topic: "{{ base }}/sensor"
+            payload: "{{ room.sensor }}"
+            retain: true
+        - if: "{{ room.sensor != '' }}"
+          then:
+            - action: mqtt.publish
+              data:
+                topic: "{{ base }}/temperature"
+                # The controller works in °C.
+                payload: >-
+                  {%- set v = states(room.sensor) -%}
+                  {%- if is_number(v) and state_attr(room.sensor, 'unit_of_measurement') == '°F' -%}
+                    {{- ((v | float - 32) * 5 / 9) | round(2) -}}
+                  {%- else -%}
+                    {{- v -}}
+                  {%- endif -%}

@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "breadboard-stage2")(type "KiCad")(uri "${KIPRJMOD}/breadboard-stage2.kicad_sym")(options "")(descr ""))
+)

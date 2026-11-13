@@ -1,0 +1,50 @@
+# KiCad backups, locks and caches
+*-backups/
+*.bak
+*.bck
+*.kicad_sch-bak
+*.kicad_pcb-bak
+~*.lck
+\#auto_saved_files#
+_autosave-*
+fp-info-cache
+*.kicad_sym-bak
+
+# KiCad / fab outputs (Gerbers, drill files, fab job files - generated from the .kicad_pcb)
+gerbers/
+fab/
+*.zip
+*.gbr
+*.gtl
+*.gbl
+*.gto
+*.gbo
+*.gts
+*.gbs
+*.gbp
+*.gtp
+*.gm1
+*.drl
+*.gbrjob
+
+# Arduino / PlatformIO build outputs
+build/
+.pio/
+*.elf
+*.bin
+*.hex
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+
+# KiCad local history (per-machine)
+.history/
+
+# KiCad per-user UI state
+*.kicad_prl
+
+# Local firmware settings (Wi-Fi / MQTT credentials)
+secrets.h

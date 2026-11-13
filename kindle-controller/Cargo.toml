@@ -1,0 +1,26 @@
+[package]
+name = "aircon-wall-controller"
+version = "0.1.0"
+edition = "2024"
+description = "Wall controller UI for a jailbroken Kindle, talking to Home Assistant"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+font8x8 = "0.3.1"
+fontdue = "0.9.5"
+libc = "0.2.191"
+log = "0.4.35"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+svgtypes = "0.16.2"
+tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"] }
+toml = "1.2.1"
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+# Keep unwinding (the default) so the framework guard's Drop still runs on a panic.

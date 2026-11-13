@@ -1,0 +1,23 @@
+Ref	Name in README	Value	Footprint
+J1	J_IN	From ESP32 board	TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal
+D1	D_TVS	SMBJ24A	Diode_SMD:D_SMB
+D2	D_REV	SS16	Diode_SMD:D_SMA
+C1	C_BULK	100uF 35V	Capacitor_SMD:CP_Elec_6.3x7.7
+C2	C_IN	2.2uF 50V X7R	Capacitor_SMD:C_1206_3216Metric
+R1	R_UV1	1M 1%	Resistor_SMD:R_0603_1608Metric
+R2	R_UV2	150k 1%	Resistor_SMD:R_0603_1608Metric
+U1	U_BUCK	LMR51606YDBVR	Package_TO_SOT_SMD:SOT-23-6
+C3	C_CB	100nF	Capacitor_SMD:C_0603_1608Metric
+L1	L1	10uH >=0.6A	Inductor_SMD:L_Bourns-SRN4018
+R3	R_FBT	160k 1%	Resistor_SMD:R_0603_1608Metric
+R4	R_FBB	30k 1%	Resistor_SMD:R_0603_1608Metric
+C4	C_O1	10uF 50V X5R	Capacitor_SMD:C_1206_3216Metric
+C5	C_O2	10uF 50V X5R	Capacitor_SMD:C_1206_3216Metric
+U2	U_LIM	TPS2553DBVR	Package_TO_SOT_SMD:SOT-23-6
+C6	C_LIMIN	100nF	Capacitor_SMD:C_0603_1608Metric
+R5	R_ILIM	220k 1%	Resistor_SMD:R_0603_1608Metric
+R6	R_FLT	100k	Resistor_SMD:R_0603_1608Metric
+C7	C_VBUS	100uF 16 V	Capacitor_THT:CP_Radial_D6.3mm_P2.50mm
+C8	C_VBUS2	100nF	Capacitor_SMD:C_0603_1608Metric
+J2	J_USB	USB-A receptacle	Connector_USB:USB_A_Molex_67643_Horizontal
+JP1	JP_DCP	D+/D- short (open)	Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm

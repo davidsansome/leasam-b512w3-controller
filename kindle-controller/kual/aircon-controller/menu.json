@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "name": "Aircon Wall Controller",
+      "priority": 1,
+      "items": [
+        { "name": "Start", "priority": 1, "action": "/bin/sh", "params": "bin/start.sh", "exitmenu": true },
+        { "name": "Stop", "priority": 2, "action": "/bin/sh", "params": "bin/stop.sh" }
+      ]
+    }
+  ]
+}
