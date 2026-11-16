@@ -20,7 +20,7 @@ use log::{debug, info, warn};
 use canvas::{Canvas, Rect};
 use fb::Framebuffer;
 use ghost::{Ghosting, Plan};
-use refresh::{FbinkCli, Refresher, Waveform};
+use refresh::{Fbink, Refresher, Waveform};
 use rotation::Rotation;
 
 use crate::config::DisplayConfig;
@@ -54,7 +54,7 @@ pub struct Display {
 impl Display {
     pub fn open(cfg: &DisplayConfig) -> Result<Self> {
         let fb = Framebuffer::open(&cfg.framebuffer, cfg.invert)?;
-        let refresher = Box::new(FbinkCli::new(cfg)?);
+        let refresher = Box::new(Fbink::new(cfg)?);
         let rotation = Rotation::new(cfg.rotation, fb.size())?;
         let (w, h) = rotation.logical_size();
         info!("drawing at {w}x{h} (rotated {}°)", cfg.rotation);

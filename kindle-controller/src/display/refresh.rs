@@ -1,18 +1,14 @@
 //! Telling the e-ink controller to show what's in the framebuffer.
 //!
-//! For now this runs the `fbink` CLI (`fbink -s top=..,left=..,width=..,height=.. -W MODE`),
-//! which knows the refresh ioctl for every Kindle generation. Spawning it costs a few tens
-//! of milliseconds per refresh, which is fine for this UI. The `Refresher` trait lets us
-//! swap in a linked FBInk or a direct ioctl later without touching anything else.
+//! This uses libfbink, built and linked in by `build.rs` (see `csrc/fbink_shim.c`), which
+//! knows the refresh ioctl for every Kindle generation. A refresh is a function call, the
+//! same as `fbink -s top=..,left=..,width=..,height=.. -W MODE [-f]` but without starting a
+//! process each time. Builds for other targets (host tests) have no FBInk, and
+//! `Fbink::new` fails there.
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use anyhow::{Context, Result, bail};
-use log::{debug, info};
+use anyhow::Result;
 
 use super::canvas::Rect;
-use crate::config::DisplayConfig;
 
 /// What kind of update this is. Mapped to a waveform name by config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,83 +25,105 @@ pub trait Refresher {
     fn refresh(&mut self, rect: Rect, waveform: Waveform) -> Result<()>;
 }
 
-pub struct FbinkCli {
-    path: PathBuf,
-    fast: String,
-    partial: String,
-    full: String,
+pub use imp::Fbink;
+
+#[cfg(fbink)]
+mod imp {
+    use std::ffi::{CStr, CString, c_char, c_int};
+    use std::io;
+
+    use anyhow::{Context, Result, anyhow, bail};
+    use log::{debug, info};
+
+    use super::{Rect, Refresher, Waveform};
+    use crate::config::DisplayConfig;
+
+    unsafe extern "C" {
+        fn aircon_fbink_waveform(name: *const c_char) -> c_int;
+        fn aircon_fbink_version() -> *const c_char;
+        fn aircon_fbink_open() -> c_int;
+        fn aircon_fbink_refresh(fd: c_int, top: u32, left: u32, width: u32, height: u32, mode: c_int, flashing: bool) -> c_int;
+        fn aircon_fbink_close(fd: c_int);
+    }
+
+    pub struct Fbink {
+        fd: c_int,
+        fast: c_int,
+        partial: c_int,
+        full: c_int,
+    }
+
+    impl Fbink {
+        pub fn new(cfg: &DisplayConfig) -> Result<Self> {
+            let fast = waveform(&cfg.waveform_fast).context("display.waveform_fast")?;
+            let partial = waveform(&cfg.waveform_partial).context("display.waveform_partial")?;
+            let full = waveform(&cfg.waveform_full).context("display.waveform_full")?;
+            // SAFETY: returns a pointer to a static string.
+            let version = unsafe { CStr::from_ptr(aircon_fbink_version()) };
+            // SAFETY: no arguments; returns an fd or -errno.
+            let fd = unsafe { aircon_fbink_open() };
+            if fd < 0 {
+                return Err(io::Error::from_raw_os_error(-fd)).context("initialising FBInk");
+            }
+            info!("using FBInk {}", version.to_string_lossy());
+            Ok(Self { fd, fast, partial, full })
+        }
+    }
+
+    fn waveform(name: &str) -> Result<c_int> {
+        let c = CString::new(name).map_err(|_| anyhow!("bad waveform name {name:?}"))?;
+        // SAFETY: `c` is a valid NUL-terminated string for the duration of the call.
+        match unsafe { aircon_fbink_waveform(c.as_ptr()) } {
+            -1 => bail!("unknown waveform {name:?}"),
+            mode => Ok(mode),
+        }
+    }
+
+    impl Refresher for Fbink {
+        fn refresh(&mut self, rect: Rect, waveform: Waveform) -> Result<()> {
+            let mode = match waveform {
+                Waveform::Fast => self.fast,
+                Waveform::Partial => self.partial,
+                Waveform::Full => self.full,
+            };
+            debug!("refresh {rect:?} {waveform:?} (mode {mode})");
+            let dim = |v: i32| u32::try_from(v).map_err(|_| anyhow!("bad refresh region {rect:?}"));
+            let (top, left, width, height) = (dim(rect.y)?, dim(rect.x)?, dim(rect.w)?, dim(rect.h)?);
+            // SAFETY: plain values; `fd` came from aircon_fbink_open and is still open.
+            let rv = unsafe { aircon_fbink_refresh(self.fd, top, left, width, height, mode, waveform == Waveform::Full) };
+            if rv < 0 {
+                return Err(io::Error::from_raw_os_error(-rv)).with_context(|| format!("refreshing {rect:?}"));
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for Fbink {
+        fn drop(&mut self) {
+            // SAFETY: `fd` came from aircon_fbink_open and isn't used again.
+            unsafe { aircon_fbink_close(self.fd) };
+        }
+    }
 }
 
-impl FbinkCli {
-    pub fn new(cfg: &DisplayConfig) -> Result<Self> {
-        let path = find_fbink(cfg.fbink.as_deref())?;
-        info!("using fbink at {}", path.display());
-        Ok(Self {
-            path,
-            fast: cfg.waveform_fast.clone(),
-            partial: cfg.waveform_partial.clone(),
-            full: cfg.waveform_full.clone(),
-        })
-    }
-}
+#[cfg(not(fbink))]
+mod imp {
+    use anyhow::{Result, bail};
 
-impl Refresher for FbinkCli {
-    fn refresh(&mut self, rect: Rect, waveform: Waveform) -> Result<()> {
-        let mode = match waveform {
-            Waveform::Fast => &self.fast,
-            Waveform::Partial => &self.partial,
-            Waveform::Full => &self.full,
-        };
-        let mut cmd = Command::new(&self.path);
-        cmd.arg("-q").arg("-W").arg(mode);
-        if waveform == Waveform::Full {
-            cmd.arg("-f");
-        }
-        // The region goes in its own argument straight after -s.
-        cmd.arg("-s")
-            .arg(format!("top={},left={},width={},height={}", rect.y, rect.x, rect.w, rect.h));
-        debug!("refresh {rect:?} {waveform:?} ({mode})");
-        let out = cmd
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("running {}", self.path.display()))?;
-        if !out.status.success() {
-            bail!(
-                "fbink failed ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-        Ok(())
-    }
-}
+    use super::{Rect, Refresher, Waveform};
+    use crate::config::DisplayConfig;
 
-fn find_fbink(configured: Option<&Path>) -> Result<PathBuf> {
-    if let Some(p) = configured {
-        if p.is_file() {
-            return Ok(p.to_path_buf());
+    pub struct Fbink;
+
+    impl Fbink {
+        pub fn new(_cfg: &DisplayConfig) -> Result<Self> {
+            bail!("this build has no FBInk (it's only linked into Kindle builds)")
         }
-        bail!("configured fbink {} not found", p.display());
     }
-    let mut candidates = Vec::new();
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
-        candidates.push(dir.join("fbink"));
+
+    impl Refresher for Fbink {
+        fn refresh(&mut self, _rect: Rect, _waveform: Waveform) -> Result<()> {
+            bail!("this build has no FBInk")
+        }
     }
-    candidates.extend(
-        [
-            "/mnt/us/libkh/bin/fbink",
-            "/mnt/us/usbnet/bin/fbink",
-            "/mnt/us/koreader/fbink",
-            "/usr/local/bin/fbink",
-            "/usr/bin/fbink",
-        ]
-        .map(PathBuf::from),
-    );
-    if let Some(p) = candidates.iter().find(|p| p.is_file()) {
-        return Ok(p.clone());
-    }
-    bail!(
-        "fbink not found (looked in {}); put it next to the controller binary or set display.fbink",
-        candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-    )
 }

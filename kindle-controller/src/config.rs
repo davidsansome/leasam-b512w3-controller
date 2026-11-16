@@ -74,9 +74,6 @@ impl Default for DeviceConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct DisplayConfig {
     pub framebuffer: PathBuf,
-    /// Path to the `fbink` binary. If unset, we look next to our own binary and in the
-    /// usual jailbreak locations.
-    pub fbink: Option<PathBuf>,
     /// TTF/OTF font. If unset, we pick one from the Kindle's own fonts.
     pub font: Option<PathBuf>,
     /// Flash an area of the screen once it has had this many partial refreshes, to clear
@@ -97,7 +94,6 @@ impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
             framebuffer: "/dev/fb0".into(),
-            fbink: None,
             font: None,
             full_refresh_every: 20,
             waveform_fast: "DU".into(),

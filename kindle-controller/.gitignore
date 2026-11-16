@@ -5,4 +5,3 @@
 /kual/aircon-controller/state.json
 /kual/aircon-controller/*.log
 /kual/aircon-controller/bin/aircon-wall-controller
-/kual/aircon-controller/bin/fbink

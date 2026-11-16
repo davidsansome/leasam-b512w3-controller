@@ -59,7 +59,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 | Path | |
 |---|---|
 | `src/main.rs` | startup and event loop |
-| `src/display/` | framebuffer (mmap), e-ink refresh via the `fbink` CLI, canvas with anti-aliased vector shapes (tiny-skia), fonts, icons |
+| `src/display/` | framebuffer (mmap), e-ink refresh via libfbink (linked in; see `build.rs` and `csrc/`), canvas with anti-aliased vector shapes (tiny-skia), fonts, icons |
 | `src/input.rs` | touchscreen (evdev) thread |
 | `src/framework.rs` | pausing/stopping the Kindle UI and restoring it |
 | `src/sleep.rs` | Sleep: Wi-Fi and touch on/off, and listening for the network coming back |
@@ -94,11 +94,17 @@ Even with the controller idle, the Kindle's own cron jobs run every 15 minutes (
 
 ## Building
 
-Built on Windows with just `rustup`: no ARM toolchain, Docker or WSL. The target is static musl, linked with `rust-lld`, so it doesn't depend on the Kindle's libc.
+Builds on Windows, Linux or macOS with `rustup` and [zig](https://ziglang.org/download/) 0.17.x: no ARM toolchain, Docker or WSL. The target is static musl, linked with `rust-lld`, so it doesn't depend on the Kindle's libc. zig only compiles [FBInk](https://github.com/NiLuJe/FBInk) (a git submodule in `vendor/FBInk`, pinned to v1.25.0), which `build.rs` builds as a minimal Kindle static library and links in. Host builds (`cargo test`) skip FBInk and don't need zig.
 
 ```bash
 rustup target add armv7-unknown-linux-musleabihf
 ```
+
+```bash
+git submodule update --init kindle-controller/vendor/FBInk
+```
+
+Install zig 0.17.x with `winget install zig.zig`, your package manager, or `pip install ziglang==0.17.1`. `build.rs` runs `zig` from the PATH, or the path in the `ZIG` environment variable, and refuses other zig series.
 
 ```bash
 cargo kindle
@@ -112,15 +118,14 @@ cargo test
 
 ## Installing
 
-1. **FBInk.** Download a release for FW ≥ 5.16.3 (the `kindlehf` build) from NiLuJe's FBInk releases. Put its `fbink` binary in `kual/aircon-controller/bin/`, or set `display.fbink` in the config. The controller also looks in `/mnt/us/libkh/bin`, `/mnt/us/usbnet/bin` and `/mnt/us/koreader`.
-2. **Files.** Copy `target/armv7-unknown-linux-musleabihf/release/aircon-wall-controller` into `kual/aircon-controller/bin/`.
-3. **Config.** Copy `config.example.toml` to `kual/aircon-controller/config.toml`, then set:
+1. **Files.** Copy `target/armv7-unknown-linux-musleabihf/release/aircon-wall-controller` into `kual/aircon-controller/bin/`.
+2. **Config.** Copy `config.example.toml` to `kual/aircon-controller/config.toml`, then set:
    - the HA URL, using its **IP address** (the static binary can't resolve `.local` names);
    - a long-lived access token.
-4. **Copy to the Kindle.** Copy the `kual/aircon-controller` folder to `/mnt/us/extensions/` on the Kindle, over USB or with `scp` via USBNetwork.
-5. **Library button (optional).** Copy `kual/aircon-controller/aircon-controller.sh` to `/mnt/us/documents/`. On firmware with the scriptlet hotfix (5.16.x jailbreaks), it appears in the Library as *Aircon Wall Controller*, with `icon.png` as its cover. Tapping it starts the controller.
-6. **Start it.** Tap *Aircon Wall Controller* in the Library, or in KUAL choose *Aircon Wall Controller → Start*.
-7. **Start at boot (optional).** Run this on the Kindle:
+3. **Copy to the Kindle.** Copy the `kual/aircon-controller` folder to `/mnt/us/extensions/` on the Kindle, over USB or with `scp` via USBNetwork.
+4. **Library button (optional).** Copy `kual/aircon-controller/aircon-controller.sh` to `/mnt/us/documents/`. On firmware with the scriptlet hotfix (5.16.x jailbreaks), it appears in the Library as *Aircon Wall Controller*, with `icon.png` as its cover. Tapping it starts the controller.
+5. **Start it.** Tap *Aircon Wall Controller* in the Library, or in KUAL choose *Aircon Wall Controller → Start*.
+6. **Start at boot (optional).** Run this on the Kindle:
 
    ```bash
    sh /mnt/us/extensions/aircon-controller/upstart/autostart.sh install
@@ -133,7 +138,7 @@ cargo test
    - **Keeping X off:** a check added to `/etc/upstart/x_prelaunch.conf` skips starting X while that job is installed. The original file is saved as `upstart/x_prelaunch.conf.orig`.
    - **Other commands:** `autostart.sh disable` boots into the Kindle UI again but leaves everything installed, `enable` undoes it, and `uninstall` puts everything back. All of them take effect at the next boot.
    - **No controller to run:** if the binary or `config.toml` is missing, the job starts the Kindle UI instead.
-8. **SSH at boot (optional).** [`upstart/aircon-sshd.conf`](kual/aircon-controller/upstart/aircon-sshd.conf) keeps jobman's dropbear running. It starts at boot, opens port 22 in the firewall, and restarts dropbear 5 seconds after it exits. Install it with `mntroot rw`, then `cp aircon-sshd.conf /etc/upstart/`, then `mntroot ro`. Start it with `initctl start aircon-sshd` (stop any other dropbear first). Its log is `/tmp/aircon-sshd.log`.
+7. **SSH at boot (optional).** [`upstart/aircon-sshd.conf`](kual/aircon-controller/upstart/aircon-sshd.conf) keeps jobman's dropbear running. It starts at boot, opens port 22 in the firewall, and restarts dropbear 5 seconds after it exits. Install it with `mntroot rw`, then `cp aircon-sshd.conf /etc/upstart/`, then `mntroot ro`. Start it with `initctl start aircon-sshd` (stop any other dropbear first). Its log is `/tmp/aircon-sshd.log`.
 
 Logs go to `/mnt/us/extensions/aircon-controller/controller.log`. Set `AIRCON_LOG=debug` in `supervise.sh` for touch coordinates, HA traffic and refresh calls. `state.json` holds the device id and webhook id. Delete it to register as a new device.
 
@@ -162,4 +167,3 @@ Settings worth knowing about:
 
 - HTTPS / `wss://` (plain `http://` on the LAN only).
 - Dimming the screen at night.
-- Linking FBInk directly instead of spawning the CLI for each refresh.

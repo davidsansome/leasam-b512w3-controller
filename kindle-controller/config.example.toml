@@ -16,7 +16,6 @@ manufacturer = "Amazon"
 model = "Kindle Paperwhite (10th gen)"
 
 [display]
-# fbink = "/mnt/us/extensions/aircon-controller/bin/fbink"
 # font = "/mnt/us/fonts/SomeFont-Regular.ttf"
 full_refresh_every = 20     # partial refreshes of an area before it gets a cleaning flash
 waveform_fast = "DU"       # button press feedback
