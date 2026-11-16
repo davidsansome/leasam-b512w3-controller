@@ -41,7 +41,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
   - **Turn backlight on/off**, through powerd's `flIntensity`. It restores the previous level when turned back on.
   - **Sleep**, which shows a full-screen sleepy house (closed eyes, a smile and some Zs), closes the HA connection, and turns Wi-Fi (`com.lab126.cmd wirelessEnable`) and the touchscreen (`com.lab126.deviced enable_touch`) off, along with the backlight. Touches are ignored while asleep even if the touchscreen can't be turned off. Pressing the **power button** turns both back on and shows a **Waking up** screen (the house with its eyes open, stretching, with Wi-Fi arcs over the roof) until HA is connected, saying whether it's still waiting for Wi-Fi or connecting to HA. Wi-Fi takes about 11 s to come back. Meanwhile HA is retried every second (for up to a minute) rather than backing off, and as soon as the Kindle announces the network is up (`com.lab126.cmd connectionAvailable`, heard through `lipc-wait-event`), it reconnects immediately. If HA still isn't back after a minute, the usual "Can't reach Home Assistant" screen takes over. The same network event also cuts short the backoff after an ordinary Wi-Fi dropout. The backlight comes back on when waking if it was on before. The Kindle itself stays awake (light sleep): the stock firmware doesn't deep-sleep on USB power either.
   - **Exit controller**, which hands the screen back to the Kindle UI.
-  - **Reboot**, which needs a second tap to confirm. The controller doesn't start automatically after a reboot yet.
+  - **Reboot**, which needs a second tap to confirm. The Kindle UI isn't started first. The controller comes back after the reboot if it's set to start at boot (see Installing).
 
   Tapping anywhere outside the menu closes it without triggering anything underneath.
 - **Kindle UI:** stopped while the controller runs (`framework.mode = "stop"`, the default). This stops the `lab126_gui` service: reader app, book renderer, window manager and memory monitor. X, `blanket` and `kindle_browser` aren't part of that service, so they're paused with SIGSTOP instead.
@@ -50,7 +50,8 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
   - **Coexist mode:** `"coexist"` leaves the UI running but paused, which exits faster but uses more CPU.
   - **Touch:** touches are grabbed so the Kindle UI never sees them.
   - **Never sleeps:** going to sleep would turn the touchscreen off, so the controller prevents it. powerd's `preventScreenSaver` stops the inactivity timeout, the power button is grabbed (`framework.block_power_button`; the controller still sees presses, to wake from **Sleep**), and if the Kindle is already asleep when the controller starts, it's woken up.
-  - **Restoring:** everything is put back on exit. While the controller runs, KUAL is unavailable, so the menu (or SSH) is the way out.
+  - **Restoring:** everything is put back on a clean exit (the menu's Exit, or `stop.sh`). If X isn't running because the controller started at boot, it's started, and the Kindle UI follows. While the controller runs, KUAL is unavailable, so the menu (or SSH) is the way out.
+  - **Crashes:** after a crash, `supervise.sh` starts the controller again 10 seconds later. The Kindle UI isn't brought back in between. A panic on any thread counts as a crash.
 
 ## Layout
 
@@ -66,6 +67,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 | `src/ui/` | screens and touch handling (`mod.rs`), the dashboard (`dashboard.rs`), drawing helpers (`draw.rs`) |
 | `src/clock.rs` | local time and ISO timestamps |
 | `kual/aircon-controller/` | KUAL extension: launcher, supervisor and stop scripts, plus the Library launcher (`aircon-controller.sh`) and its cover (`icon.png`) |
+| `kual/aircon-controller/upstart/` | boot jobs: the controller (with `autostart.sh` to install it) and the SSH server |
 
 ### Configuring entities
 
@@ -117,8 +119,20 @@ cargo test
 4. **Copy to the Kindle.** Copy the `kual/aircon-controller` folder to `/mnt/us/extensions/` on the Kindle, over USB or with `scp` via USBNetwork.
 5. **Library button (optional).** Copy `kual/aircon-controller/aircon-controller.sh` to `/mnt/us/documents/`. On firmware with the scriptlet hotfix (5.16.x jailbreaks), it appears in the Library as *Aircon Wall Controller*, with `icon.png` as its cover. Tapping it starts the controller.
 6. **Start it.** Tap *Aircon Wall Controller* in the Library, or in KUAL choose *Aircon Wall Controller → Start*.
+7. **Start at boot (optional).** Run this on the Kindle:
 
-7. **SSH at boot (optional).** [`upstart/aircon-sshd.conf`](upstart/aircon-sshd.conf) keeps jobman's dropbear running. It starts at boot, opens port 22 in the firewall, and restarts dropbear 5 seconds after it exits. Install it with `mntroot rw`, then `cp aircon-sshd.conf /etc/upstart/`, then `mntroot ro`. Start it with `initctl start aircon-sshd` (stop any other dropbear first). Its log is `/tmp/aircon-sshd.log`.
+   ```bash
+   sh /mnt/us/extensions/aircon-controller/upstart/autostart.sh install
+   ```
+
+   From the next boot, the Kindle goes straight into the controller.
+   - **No X at boot:** neither X nor the Kindle UI starts. The controller draws straight to the framebuffer, so it doesn't need them.
+   - **Exit from the menu:** starts X, and the Kindle UI comes up after it (about a minute).
+   - **The job:** [`upstart/aircon-controller.conf`](kual/aircon-controller/upstart/aircon-controller.conf) runs `supervise.sh` once the background services are up (powerd, Wi-Fi, touch).
+   - **Keeping X off:** a check added to `/etc/upstart/x_prelaunch.conf` skips starting X while that job is installed. The original file is saved as `upstart/x_prelaunch.conf.orig`.
+   - **Other commands:** `autostart.sh disable` boots into the Kindle UI again but leaves everything installed, `enable` undoes it, and `uninstall` puts everything back. All of them take effect at the next boot.
+   - **No controller to run:** if the binary or `config.toml` is missing, the job starts the Kindle UI instead.
+8. **SSH at boot (optional).** [`upstart/aircon-sshd.conf`](kual/aircon-controller/upstart/aircon-sshd.conf) keeps jobman's dropbear running. It starts at boot, opens port 22 in the firewall, and restarts dropbear 5 seconds after it exits. Install it with `mntroot rw`, then `cp aircon-sshd.conf /etc/upstart/`, then `mntroot ro`. Start it with `initctl start aircon-sshd` (stop any other dropbear first). Its log is `/tmp/aircon-sshd.log`.
 
 Logs go to `/mnt/us/extensions/aircon-controller/controller.log`. Set `AIRCON_LOG=debug` in `supervise.sh` for touch coordinates, HA traffic and refresh calls. `state.json` holds the device id and webhook id. Delete it to register as a new device.
 
@@ -129,7 +143,11 @@ On the PW4 with FW 5.16.4 and HA 2026.10.4, these have been checked:
 - touch mapping (no `touch.*` fixes needed);
 - landscape rendering;
 - the menu (open, close, backlight, arming reboot);
-- restoring the Kindle UI on exit.
+- restoring the Kindle UI on exit;
+- starting at boot without X, with Wi-Fi and HA connecting and no Kindle UI;
+- handing back after a boot start (`stop.sh`): X and the whole Kindle UI come up;
+- restarting after `kill -9` without bringing the Kindle UI back;
+- `autostart.sh` install, uninstall, enable and disable.
 
 Exit and Reboot from the menu haven't been tried yet.
 
@@ -141,7 +159,6 @@ Settings worth knowing about:
 
 ## Not done yet
 
-- Starting automatically at boot.
 - HTTPS / `wss://` (plain `http://` on the LAN only).
 - Dimming the screen at night.
 - Linking FBInk directly instead of spawning the CLI for each refresh.

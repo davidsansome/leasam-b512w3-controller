@@ -26,6 +26,16 @@ pub fn set(service: &str, prop: &str, value: &str) -> bool {
     run("lipc-set-prop", &[kind, service, prop, value])
 }
 
+/// Whether an Upstart job exists and is stopped (`status x` prints `x stop/waiting`).
+/// False if it's running or starting, or if there's no such job.
+pub fn job_stopped(job: &str) -> bool {
+    Command::new("status")
+        .arg(job)
+        .stdin(Stdio::null())
+        .output()
+        .is_ok_and(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).contains(" stop/"))
+}
+
 /// Runs a command, logging (not failing) if it doesn't work. Returns whether it succeeded.
 pub fn run(cmd: &str, args: &[&str]) -> bool {
     debug!("running {cmd} {}", args.join(" "));

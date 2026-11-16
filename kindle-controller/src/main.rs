@@ -36,6 +36,9 @@ use display::font::Fonts;
 use ui::{App, UiAction};
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+/// Set by the panic hook. The main loop then stops cleanly, but we exit with an error so
+/// supervise.sh starts us again rather than handing back to the Kindle UI.
+static PANICKED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -104,13 +107,45 @@ fn parse_args() -> Result<(PathBuf, Mode)> {
     Ok((config, mode))
 }
 
+/// How the UI loop ended without an error.
+enum Outcome {
+    /// Exit from the menu, or SIGTERM: hand the display back to the Kindle UI.
+    Exit,
+    /// Reboot from the menu.
+    Reboot,
+}
+
+/// The upstart job that starts the controller at boot, when it's installed.
+const AUTOSTART_JOB: &str = "/etc/upstart/aircon-controller.conf";
+
 fn run(config_path: &Path, config: Config) -> Result<()> {
     info!("aircon-wall-controller {} starting", env!("CARGO_PKG_VERSION"));
     let signals = install_signal_handlers();
-    let state_path = config_path.with_file_name("state.json");
+    let framework_cfg = config.framework.clone();
+    framework::apply(&framework_cfg);
+    // On an error or panic the display is left as it is: supervise.sh starts us again, and
+    // handing back in between would start X and the whole Kindle UI.
+    let outcome = run_ui(config_path, config, signals)?;
+    if PANICKED.load(Ordering::SeqCst) {
+        bail!("a thread panicked");
+    }
+    match outcome {
+        Outcome::Exit => framework::restore(&framework_cfg),
+        Outcome::Reboot => {
+            // No handing back first: that would start X and the Kindle UI on the way down.
+            lipc::run("sync", &[]);
+            if !lipc::run("reboot", &[]) {
+                bail!("reboot failed");
+            }
+        }
+    }
+    Ok(())
+}
 
-    // Declared first so it's dropped last, after the display is released.
-    let _framework = framework::Guard::take(&config.framework);
+/// Runs the UI until Exit, Reboot or a signal. Everything it opens (display, input grabs,
+/// the HA connection) is released by the time it returns.
+fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) -> Result<Outcome> {
+    let state_path = config_path.with_file_name("state.json");
     let mut display = display::Display::open(&config.display)?;
     // Held for the whole run: dropping them releases the grabs.
     let power_buttons = input::open_power_buttons(config.framework.block_power_button);
@@ -169,7 +204,7 @@ fn run(config_path: &Path, config: Config) -> Result<()> {
     app.set_battery(percent, charging);
     // Whether the backlight was on when going to sleep, to turn it back on when waking.
     let mut backlight_before_sleep = false;
-    let mut reboot = false;
+    let mut outcome = Outcome::Exit;
     let mut last_battery = Instant::now();
     // The loop sleeps until an event arrives or the UI next has something time-based to
     // do (see `App::next_wakeup`), so it doesn't wake the CPU while idle.
@@ -231,8 +266,13 @@ fn run(config_path: &Path, config: Config) -> Result<()> {
                 }
                 Some(UiAction::Reboot) => {
                     info!("reboot requested from the menu");
-                    let _ = app.show_farewell(&mut display, "Rebooting", "The controller doesn't start by itself afterwards yet.");
-                    reboot = true;
+                    let detail = if Path::new(AUTOSTART_JOB).exists() {
+                        "The controller starts again by itself."
+                    } else {
+                        "Start the controller again from the Library afterwards."
+                    };
+                    let _ = app.show_farewell(&mut display, "Rebooting", detail);
+                    outcome = Outcome::Reboot;
                     break;
                 }
                 None => {}
@@ -261,16 +301,7 @@ fn run(config_path: &Path, config: Config) -> Result<()> {
             Err(RecvTimeoutError::Disconnected) => bail!("event sources went away"),
         }
     }
-    if reboot {
-        // Hand the screen back properly first, then reboot.
-        drop(display);
-        drop(_framework);
-        lipc::run("sync", &[]);
-        if !lipc::run("reboot", &[]) {
-            bail!("reboot failed");
-        }
-    }
-    Ok(())
+    Ok(outcome)
 }
 
 /// Write end of the pipe that wakes the main loop on a signal or panic.
@@ -289,7 +320,7 @@ fn request_shutdown() {
 }
 
 /// Installs handlers for SIGTERM, SIGINT and SIGHUP (and a panic hook) that ask the main
-/// loop to shut down cleanly, so the Kindle UI is restored. Returns the pipe's read end,
+/// loop to shut down cleanly (after a signal, the Kindle UI is restored). Returns the pipe's read end,
 /// for `forward_signals`.
 #[cfg(target_os = "linux")]
 fn install_signal_handlers() -> Option<std::fs::File> {
@@ -315,6 +346,7 @@ fn install_signal_handlers() -> Option<std::fs::File> {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default_hook(info);
+        PANICKED.store(true, Ordering::SeqCst);
         request_shutdown();
     }));
     reader

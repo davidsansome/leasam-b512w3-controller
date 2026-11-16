@@ -11,31 +11,17 @@
 //!
 //! Either way, powerd is told not to start the screensaver while we run.
 //!
-//! `restore` is safe to call more than once. The launcher script calls it again after the
-//! controller exits (`--restore-framework`), so a crash can't leave the Kindle frozen.
+//! When the controller starts at boot (`upstart/aircon-controller.conf`), X and the
+//! Kindle UI behind it are never started. Handing back then means starting X, which
+//! brings the whole UI up.
+//!
+//! The display is only handed back on a clean exit (the menu's Exit, or SIGTERM). After a
+//! crash it's left as it is, because `supervise.sh` starts the controller again.
 
 use log::info;
 
 use crate::config::{FrameworkConfig, FrameworkMode};
-use crate::lipc::{run, set as lipc_set};
-
-/// Takes the framework out of the way on creation and restores it on drop.
-pub struct Guard {
-    cfg: FrameworkConfig,
-}
-
-impl Guard {
-    pub fn take(cfg: &FrameworkConfig) -> Self {
-        apply(cfg);
-        Self { cfg: cfg.clone() }
-    }
-}
-
-impl Drop for Guard {
-    fn drop(&mut self) {
-        restore(&self.cfg);
-    }
-}
+use crate::lipc::{job_stopped, run, set as lipc_set};
 
 /// Wakes the Kindle if powerd already had it in screensaver mode when we started (the
 /// touchscreen is off in that mode). From then on `preventScreenSaver` stops the timeout,
@@ -78,21 +64,25 @@ pub fn apply(cfg: &FrameworkConfig) {
 
 pub fn restore(cfg: &FrameworkConfig) {
     info!("handing the display back to the Kindle UI");
-    match cfg.mode {
-        FrameworkMode::Coexist => {
-            for p in cfg.pause_processes.iter().rev() {
-                run("killall", &["-CONT", p]);
+    for p in cfg.pause_processes.iter().rev() {
+        run("killall", &["-CONT", p]);
+    }
+    if job_stopped("x") {
+        // We started at boot, before X. Starting it brings up the whole UI: the jobs after
+        // it (x_setup, langpicker, lab126_gui...) are still waiting for its events.
+        info!("X isn't running: starting it, and the Kindle UI after it");
+        run("start", &["x"]);
+    } else {
+        match cfg.mode {
+            FrameworkMode::Coexist => {
+                lipc_set("com.lab126.pillow", "disableEnablePillow", "enable");
+                // The framework doesn't know we drew over it, so make it repaint by going home.
+                lipc_set("com.lab126.appmgrd", "start", "app://com.lab126.booklet.home");
             }
-            lipc_set("com.lab126.pillow", "disableEnablePillow", "enable");
-            // The framework doesn't know we drew over it, so make it repaint by going home.
-            lipc_set("com.lab126.appmgrd", "start", "app://com.lab126.booklet.home");
-        }
-        FrameworkMode::Stop => {
-            for p in cfg.pause_processes.iter().rev() {
-                run("killall", &["-CONT", p]);
-            }
-            if !run("start", &["lab126_gui"]) {
-                run("start", &["framework"]);
+            FrameworkMode::Stop => {
+                if !run("start", &["lab126_gui"]) {
+                    run("start", &["framework"]);
+                }
             }
         }
     }
