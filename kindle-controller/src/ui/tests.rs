@@ -477,3 +477,31 @@ fn preview() {
     shot("sleep", json!({}), true);
     shot("waking", json!({}), true);
 }
+
+/// Renders the Library cover for the scriptlet (`kual/aircon-controller/icon.png`) as a PGM:
+/// `PREVIEW_DIR=... PREVIEW_FONT=regular.ttf PREVIEW_BOLD=bold.ttf cargo test scriptlet_icon -- --ignored`,
+/// then `magick icon.pgm icon.png`. Use the Kindle's Amazon Ember fonts to match its UI.
+#[test]
+#[ignore]
+fn scriptlet_icon() {
+    use std::path::Path;
+    let dir = std::env::var("PREVIEW_DIR").expect("PREVIEW_DIR");
+    let font = |var: &str| std::env::var(var).expect(var);
+    let mut fonts = Fonts::from_files(Path::new(&font("PREVIEW_FONT")), Path::new(&font("PREVIEW_BOLD")));
+    let (w, h) = (600, 900);
+    let mut c = Canvas::new(w, h);
+    c.fill(WHITE);
+    c.stroke_round_rect(Rect::new(18, 18, w - 36, h - 36), 28.0, 4.0, BLACK);
+    let size = 440;
+    let mut y = 120;
+    icons::draw_waking_house(&mut c, (w - size) / 2, y, size, BLACK);
+    y += size + 60;
+    let (a, d) = fonts.line_metrics(104, Weight::Bold);
+    fonts.draw_centered(&mut c, "Aircon", 104, Weight::Bold, w / 2, y + a, BLACK);
+    y += a + d + 12;
+    let (a, _) = fonts.line_metrics(46, Weight::Regular);
+    fonts.draw_centered(&mut c, "Wall Controller", 46, Weight::Regular, w / 2, y + a, DARK_GRAY);
+    let mut pgm = format!("P5\n{w} {h}\n255\n").into_bytes();
+    pgm.extend_from_slice(c.raw());
+    std::fs::write(Path::new(&dir).join("icon.pgm"), pgm).unwrap();
+}

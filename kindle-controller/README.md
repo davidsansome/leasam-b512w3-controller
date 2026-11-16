@@ -65,7 +65,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 | `src/diagnostics.rs` | battery / uptime / Wi-Fi readings |
 | `src/ui/` | screens and touch handling (`mod.rs`), the dashboard (`dashboard.rs`), drawing helpers (`draw.rs`) |
 | `src/clock.rs` | local time and ISO timestamps |
-| `kual/aircon-controller/` | KUAL extension: launcher, supervisor and stop scripts |
+| `kual/aircon-controller/` | KUAL extension: launcher, supervisor and stop scripts, plus the Library launcher (`aircon-controller.sh`) and its cover (`icon.png`) |
 
 ### Configuring entities
 
@@ -82,6 +82,8 @@ The `[dashboard]` and `[aircon]` sections of `config.example.toml` show every op
 ### Previewing on a PC
 
 `cargo test preview -- --ignored` renders sample screens to raw 8-bit files. Set `PREVIEW_DIR` to the output folder, and `PREVIEW_FONT` / `PREVIEW_BOLD` to a regular and a bold TTF. That's handy for checking layout changes without the Kindle.
+
+`cargo test scriptlet_icon -- --ignored`, with the same variables, renders the Library cover to `icon.pgm` using the waking-house icon. Convert it with `magick icon.pgm icon.png` and copy it to `kual/aircon-controller/`. Use the Kindle's Amazon Ember fonts (`/usr/java/lib/fonts/Amazon-Ember-{Regular,Bold}.ttf`) to match its UI.
 
 ### Kindle background activity
 
@@ -113,7 +115,8 @@ cargo test
    - the HA URL, using its **IP address** (the static binary can't resolve `.local` names);
    - a long-lived access token.
 4. **Copy to the Kindle.** Copy the `kual/aircon-controller` folder to `/mnt/us/extensions/` on the Kindle, over USB or with `scp` via USBNetwork.
-5. **Start it.** In KUAL, choose *Aircon Wall Controller → Start*.
+5. **Library button (optional).** Copy `kual/aircon-controller/aircon-controller.sh` to `/mnt/us/documents/`. On firmware with the scriptlet hotfix (5.16.x jailbreaks), it appears in the Library as *Aircon Wall Controller*, with `icon.png` as its cover. Tapping it starts the controller.
+6. **Start it.** Tap *Aircon Wall Controller* in the Library, or in KUAL choose *Aircon Wall Controller → Start*.
 
 Logs go to `/mnt/us/extensions/aircon-controller/controller.log`. Set `AIRCON_LOG=debug` in `supervise.sh` for touch coordinates, HA traffic and refresh calls. `state.json` holds the device id and webhook id. Delete it to register as a new device.
 
@@ -132,7 +135,7 @@ Settings worth knowing about:
 
 - **Orientation.** `display.rotation = 270` flips landscape the other way up. Touch follows automatically.
 - **Other KUAL builds / Kindles.** The `touch.*`, `display.invert`, waveform, `display.font` and `framework.pause_processes` settings exist for hardware that differs from the PW4.
-- **KUAL launch.** If the menu entries do nothing, check that this KUAL version supports `"params"` in `menu.json`. KUAL isn't installed on the test Kindle yet; it's started over SSH with `sh bin/start.sh`.
+- **KUAL launch.** If the menu entries do nothing, check that this KUAL version supports `"params"` in `menu.json`. KUAL isn't installed on the test Kindle yet; it's started from the Library scriptlet, or over SSH with `sh bin/start.sh`.
 
 ## Not done yet
 
