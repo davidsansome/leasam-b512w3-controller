@@ -353,6 +353,33 @@ fn waking_screen_hides_reconnect_failures_until_connected() {
 }
 
 #[test]
+fn startup_shows_the_waking_screen_until_connected() {
+    let mut app = App::new(dash(), aircon(), Fonts::bitmap(), (W, H));
+    assert!(matches!(app.screen, Screen::Waking { kind: Waking::Startup, wifi_up: false, .. }));
+    app.on_ha_event(HaEvent::Disconnected { reason: "Network unreachable".into(), attempt: 3, retry_in: Duration::from_secs(8) });
+    assert!(matches!(app.screen, Screen::Waking { kind: Waking::Startup, failure: Some(_), .. }));
+    app.set_network_up();
+    assert!(matches!(app.screen, Screen::Waking { wifi_up: true, .. }));
+    app.render();
+    assert!(app.hits.is_empty(), "no dashboard controls while starting");
+    app.on_ha_event(HaEvent::Connected);
+    assert!(matches!(app.screen, Screen::Dashboard));
+    // Once connected, losing HA shows the error screen as before.
+    app.on_ha_event(HaEvent::Disconnected { reason: "boom".into(), attempt: 1, retry_in: Duration::from_secs(1) });
+    assert!(matches!(app.screen, Screen::Disconnected { .. }));
+}
+
+#[test]
+fn startup_gives_up_on_wifi_after_a_while() {
+    let mut app = App::new(dash(), aircon(), Fonts::bitmap(), (W, H));
+    if let Screen::Waking { since, .. } = &mut app.screen {
+        *since = Instant::now() - WAKING_TIMEOUT;
+    }
+    app.tick();
+    assert!(matches!(&app.screen, Screen::Disconnected { reason, .. } if reason == "Still waiting for Wi-Fi"));
+}
+
+#[test]
 fn waking_screen_gives_up_after_a_while() {
     let mut app = app();
     app.wake();
@@ -435,9 +462,10 @@ fn preview() {
         app.on_ha_event(HaEvent::Entities(states(all)));
         app.on_ha_event(HaEvent::Forecast(forecast.clone()));
         app.on_ha_event(HaEvent::History(history.clone()));
-        if connected {
-            app.on_ha_event(HaEvent::Connected);
-        } else {
+        // Connected first either way: losing the connection is what shows the error screen
+        // (failures while starting up stay on the waking screen).
+        app.on_ha_event(HaEvent::Connected);
+        if !connected {
             app.on_ha_event(HaEvent::Disconnected {
                 reason: "connecting to 192.168.1.100:8123: Connection refused (os error 111)".into(),
                 attempt: 5,
@@ -449,6 +477,9 @@ fn preview() {
         } else if name == "waking" {
             app.wake();
             app.set_network_up();
+            app.render();
+        } else if name == "starting" {
+            app.screen = Screen::Waking { kind: Waking::Startup, since: Instant::now(), wifi_up: false, failure: None };
             app.render();
         } else {
             app.render();
@@ -476,6 +507,7 @@ fn preview() {
     shot("disconnected", json!({}), false);
     shot("sleep", json!({}), true);
     shot("waking", json!({}), true);
+    shot("starting", json!({}), true);
 }
 
 /// Renders the Library cover for the scriptlet (`kual/aircon-controller/icon.png`) as a PGM:

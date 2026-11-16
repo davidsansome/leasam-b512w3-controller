@@ -26,6 +26,12 @@ pub fn set_touch(on: bool) {
     }
 }
 
+/// Whether Wi-Fi is connected right now, according to wifid. Used at startup, since
+/// `NetworkWatcher` only hears about connections made after it starts.
+pub fn wifi_connected() -> bool {
+    lipc::get_string("com.lab126.wifid", "cmState").as_deref() == Some("CONNECTED")
+}
+
 /// Listens for the Kindle saying it has a working network connection again, through
 /// `lipc-wait-event` on the connection manager. That's lipc's event bus, which is how the
 /// Kindle's services announce changes (it's built on D-Bus underneath). Turning Wi-Fi on

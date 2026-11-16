@@ -182,6 +182,10 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
         warn!("[[dashboard.rooms]] in config.toml is no longer used: set rooms up in Home Assistant with the Aircon rooms blueprint");
     }
     let mut app = App::new(config.dashboard.clone(), config.aircon.clone(), fonts, size);
+    // Checked after the network watcher has started, so a connection can't slip between.
+    if sleep::wifi_connected() {
+        app.set_network_up();
+    }
     let ha = ha::spawn(
         ha::Options {
             ha: config.home_assistant.clone(),

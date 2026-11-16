@@ -1,11 +1,14 @@
 //! Screens and touch handling.
 //!
-//! `App` decides what's on screen: a "connecting" message, a full-screen error while HA is
-//! unreachable, or the dashboard (weather, rooms and the aircon panel). A ⋮ button in the
-//! top-right corner opens a dropdown menu for the backlight, sleep, exiting and rebooting.
-//! While asleep, only the sleep screen is shown and touches are ignored. After waking, a
-//! "Waking up" screen stays up until HA is back (or `WAKING_TIMEOUT` passes), instead of
-//! the connection error that the reconnect attempts would otherwise show.
+//! `App` decides what's on screen: a waking screen while Wi-Fi and HA connect, a
+//! full-screen error while HA is unreachable, or the dashboard (weather, rooms and the
+//! aircon panel). A ⋮ button in the top-right corner opens a dropdown menu for the
+//! backlight, sleep, exiting and rebooting. While asleep, only the sleep screen is shown and
+//! touches are ignored.
+//!
+//! On starting ("Starting up") and after waking ("Waking up"), the waking screen stays up
+//! until HA is connected (or `WAKING_TIMEOUT` passes), instead of the connection error that
+//! the first attempts would otherwise show while Wi-Fi connects.
 //!
 //! Taps change what's shown straight away ("optimistic" state) and send a service call; the
 //! optimistic state is dropped once HA reports the real one, or after a timeout.
@@ -56,19 +59,51 @@ const NOTICE_H: i32 = 90;
 const PENDING_TIMEOUT: Duration = Duration::from_secs(8);
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(10);
 const MENU_TIMEOUT: Duration = Duration::from_secs(30);
-/// After waking, how long to show "Waking up" before admitting HA can't be reached. Wi-Fi
-/// alone takes about 11 s to come back on the PW4.
+/// On starting or after waking, how long to show the waking screen before admitting HA
+/// can't be reached. Wi-Fi alone takes about 11 s to come back after Sleep on the PW4, and
+/// about 20 s to connect at boot.
 const WAKING_TIMEOUT: Duration = Duration::from_secs(60);
 /// How much room-temperature history the sparklines show.
 pub const HISTORY_WINDOW: Duration = Duration::from_secs(3600);
 
 enum Screen {
-    Connecting,
     Disconnected { reason: String, attempt: u32, retry_at: Instant },
-    /// Just woken from sleep: waiting for Wi-Fi, then HA. Connection failures meanwhile are
-    /// kept in `failure`, to show if it gives up.
-    Waking { since: Instant, wifi_up: bool, failure: Option<(String, u32, Instant)> },
+    /// Just started, or just woken from sleep: waiting for Wi-Fi, then HA. Connection
+    /// failures meanwhile are kept in `failure`, to show if it gives up.
+    Waking { kind: Waking, since: Instant, wifi_up: bool, failure: Option<(String, u32, Instant)> },
     Dashboard,
+}
+
+/// Why we're waiting for Wi-Fi and HA: it changes the wording on the waking screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Waking {
+    /// The controller has just started, e.g. at boot, when Wi-Fi is still connecting.
+    Startup,
+    /// Woken from Sleep, which turned Wi-Fi off.
+    FromSleep,
+}
+
+impl Waking {
+    fn title(self) -> &'static str {
+        match self {
+            Waking::Startup => "Starting up",
+            Waking::FromSleep => "Waking up",
+        }
+    }
+
+    fn waiting_for_wifi(self) -> &'static str {
+        match self {
+            Waking::Startup => "Waiting for Wi-Fi",
+            Waking::FromSleep => "Turning Wi-Fi on",
+        }
+    }
+
+    fn gave_up(self) -> &'static str {
+        match self {
+            Waking::Startup => "Still waiting for Wi-Fi",
+            Waking::FromSleep => "Still waiting for Wi-Fi after waking up",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,7 +179,7 @@ impl App {
             aircon,
             fonts,
             canvas: Canvas::new(size.0, size.1),
-            screen: Screen::Connecting,
+            screen: Screen::Waking { kind: Waking::Startup, since: Instant::now(), wifi_up: false, failure: None },
             entities: Arc::new(EntityMap::new()),
             forecast: Vec::new(),
             rooms: Vec::new(),
@@ -233,10 +268,11 @@ impl App {
     /// connects.
     pub fn wake(&mut self) {
         self.set_asleep(false);
-        self.screen = Screen::Waking { since: Instant::now(), wifi_up: false, failure: None };
+        self.screen = Screen::Waking { kind: Waking::FromSleep, since: Instant::now(), wifi_up: false, failure: None };
     }
 
-    /// The Kindle reports a working network connection again.
+    /// The Kindle reports a working network connection (again), or Wi-Fi was already
+    /// connected when we started.
     pub fn set_network_up(&mut self) {
         if let Screen::Waking { wifi_up, .. } = &mut self.screen
             && !*wifi_up
@@ -269,7 +305,7 @@ impl App {
                 self.invalidate(Update::Full);
             }
             HaEvent::Disconnected { reason, attempt, retry_in } if matches!(self.screen, Screen::Waking { .. }) => {
-                // Expected while Wi-Fi comes back: keep showing "Waking up" for now.
+                // Expected while Wi-Fi connects: keep showing the waking screen for now.
                 if let Screen::Waking { failure, .. } = &mut self.screen {
                     *failure = Some((reason, attempt, Instant::now() + retry_in));
                 }
@@ -442,13 +478,12 @@ impl App {
         if self.asleep {
             return;
         }
-        if let Screen::Waking { since, failure, .. } = &mut self.screen
+        if let Screen::Waking { kind, since, failure, .. } = &mut self.screen
             && since.elapsed() >= WAKING_TIMEOUT
         {
             // Give up on the friendly screen and show what's wrong.
-            let (reason, attempt, retry_at) = failure
-                .take()
-                .unwrap_or_else(|| ("Still waiting for Wi-Fi after waking up".into(), 0, Instant::now()));
+            let (reason, attempt, retry_at) =
+                failure.take().unwrap_or_else(|| (kind.gave_up().into(), 0, Instant::now()));
             self.screen = Screen::Disconnected { reason, attempt, retry_at };
             self.invalidate(Update::Full);
         }
@@ -556,7 +591,6 @@ impl App {
         self.shown_clock = clock::local_hhmm(now);
         self.shown_countdown = self.countdown_text();
         match &self.screen {
-            Screen::Connecting => self.draw_message("Connecting to Home Assistant...", None, None),
             Screen::Disconnected { reason, attempt, retry_at } => {
                 let reason = reason.clone();
                 let secs = retry_secs(*retry_at);
@@ -567,9 +601,10 @@ impl App {
                 };
                 self.draw_message("Can't reach Home Assistant", Some(&reason), Some(&retry));
             }
-            Screen::Waking { wifi_up, .. } => {
-                let detail = if *wifi_up { "Connecting to Home Assistant" } else { "Turning Wi-Fi on" };
-                self.draw_house_screen(icons::draw_waking_house, "Waking up", detail);
+            Screen::Waking { kind, wifi_up, .. } => {
+                let kind = *kind;
+                let detail = if *wifi_up { "Connecting to Home Assistant" } else { kind.waiting_for_wifi() };
+                self.draw_house_screen(icons::draw_waking_house, kind.title(), detail);
             }
             Screen::Dashboard => self.render_dashboard(),
         }
