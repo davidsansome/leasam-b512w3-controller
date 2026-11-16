@@ -118,6 +118,8 @@ cargo test
 5. **Library button (optional).** Copy `kual/aircon-controller/aircon-controller.sh` to `/mnt/us/documents/`. On firmware with the scriptlet hotfix (5.16.x jailbreaks), it appears in the Library as *Aircon Wall Controller*, with `icon.png` as its cover. Tapping it starts the controller.
 6. **Start it.** Tap *Aircon Wall Controller* in the Library, or in KUAL choose *Aircon Wall Controller → Start*.
 
+7. **SSH at boot (optional).** [`upstart/aircon-sshd.conf`](upstart/aircon-sshd.conf) keeps jobman's dropbear running. It starts at boot, opens port 22 in the firewall, and restarts dropbear 5 seconds after it exits. Install it with `mntroot rw`, then `cp aircon-sshd.conf /etc/upstart/`, then `mntroot ro`. Start it with `initctl start aircon-sshd` (stop any other dropbear first). Its log is `/tmp/aircon-sshd.log`.
+
 Logs go to `/mnt/us/extensions/aircon-controller/controller.log`. Set `AIRCON_LOG=debug` in `supervise.sh` for touch coordinates, HA traffic and refresh calls. `state.json` holds the device id and webhook id. Delete it to register as a new device.
 
 ## Tested on the device
