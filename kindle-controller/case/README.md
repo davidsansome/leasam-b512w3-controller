@@ -10,13 +10,13 @@ A two-part PLA case for mounting the Paperwhite 4 on an Australian wall-plate br
 
 | STL | Print orientation | Size |
 |---|---|---|
-| `stl/back_plate.stl` | wall side down, as exported | 185 × 125 × 17.6 mm |
-| `stl/front_plate.stl` | face down, as exported | 185 × 125 × 12.4 mm |
+| `stl/back_plate.stl` | wall side down, as exported | 193 × 125 × 17.6 mm |
+| `stl/front_plate.stl` | face down, as exported | 193 × 125 × 12.4 mm |
 | `stl/test_back_end.stl`, `stl/test_front_end.stl` | as above | the right-hand 45 mm of each |
 
 **Print the test pieces first.** They are the right-hand end of each plate. Use them to check:
 - the Kindle's height fit;
-- the plug pocket and the power-button notch;
+- the plug pocket and the stops that locate the Kindle sideways;
 - how one pair of snap tabs feels.
 
 **Print settings.** Everything prints without supports on the Mk4: PLA, 0.2 mm layers, 3 perimeters. All overhangs are 45° or less.
@@ -29,20 +29,22 @@ A two-part PLA case for mounting the Paperwhite 4 on an Australian wall-plate br
   - **Wall opening.** A 64 × 70 mm opening between the screws leads to the hole in the wall.
   - **Cable space.** The Kindle sits on 5 mm ledges, 6 mm off the back panel, which leaves room behind it for the cable and the screw heads.
   - **Clearance.** There's 0.4 mm all round the Kindle.
-- **Plug pocket.** A 9 mm pocket runs down the right-hand end, beyond the Kindle's edge.
+- **Plug pocket.** A 17 mm pocket runs down the right-hand end, beyond the Kindle's edge.
   - **Locating stops.** Two stops keep the Kindle in place sideways: one 8–22 mm from the top, and one 5–13 mm from the bottom.
   - **Cable route.** The cable dives from the pocket into the space behind the Kindle, between the stops, and then runs to the wall opening.
 - **Front plate.** It covers the bezel, and its skirt wraps over the back plate's walls down to a seam 7 mm off the wall.
   - **Snap tabs.** There are three tabs on the top edge and three on the bottom. Each has a 45° bump that clicks into a groove in the back plate.
   - **Removing it.** Hook a finger into the scoop under the bottom edge and pull it forwards.
 - **Screen opening.** The opening is 0.75 mm larger than the active area on every side, and its edge is chamfered so it doesn't shade the edges of the screen.
-- **Power button.** A 20 mm notch, open at the front and the side, exposes the power button.
+- **Power button.** It's covered: the front plate closes over the whole right-hand end.
 
 ## The USB cable
 
-The case is sized for a flat micro-USB cable whose plug sticks out 7.5 mm from the Kindle's edge, leaving about 1.5 mm spare in the 9 mm pocket. The cable should head **down**, towards the bottom of the case, because the power button is above the port. That leaves about 30 mm between the port (65–72 mm from the top) and the bottom stop for the cable to bend into the space behind the Kindle.
+The case is sized for a micro-USB cable whose plug sticks out 15.5 mm from the Kindle's edge, leaving about 1.5 mm spare in the 17 mm pocket. The cable can head either way along the pocket before it bends into the space behind the Kindle:
+- **Down:** there's about 30 mm between the port (65–72 mm from the top) and the bottom stop.
+- **Up:** there's about 43 mm between the port and the top stop.
 
-A full-size plug won't fit. To use a longer plug, increase `POCKET`.
+A full-size plug won't fit. To use a longer plug, increase `POCKET`. The case is centred on the screws, so a wider pocket moves the Kindle left relative to them.
 
 ## Changing it
 
@@ -60,9 +62,43 @@ The parameters you're most likely to need:
 
 | Parameter | What it sets |
 |---|---|
-| `USB_FROM_TOP`, `POWER_FROM_TOP` | where the port and button are, in mm from the Kindle's top edge (measured) |
+| `USB_FROM_TOP` | where the port is, in mm from the Kindle's top edge (measured) |
 | `TOP_STOP`, `BOTTOM_STOP` | where the stops that locate the Kindle sideways are |
 | `SCREEN_*` | bezel widths |
 | `CLR` | fit of the Kindle |
 | `BUMP`, `GROOVE` | how firmly the front clips on |
 | `POCKET` | room for the plug |
+
+## Flat-mount variant
+
+`case_flat.py` builds a second design, which writes `stl/flat_*.stl`. In this design the Kindle lies directly on the back panel, with nothing behind it. The case sits off-centre on the wall box, so the cable can drop from the plug pocket straight into the box.
+
+![Flat-mount layout](flat_layout.png)
+
+| STL | Print orientation | Size |
+|---|---|---|
+| `stl/flat_back_plate.stl` | wall side down, as exported | 213 × 125 × 11.6 mm |
+| `stl/flat_front_plate.stl` | face down, as exported | 213 × 125 × 9.4 mm |
+| `stl/flat_test_back_end.stl`, `stl/flat_test_front_end.stl` | as above | the right-hand 55 mm of each |
+
+The test pieces include the pocket, the cable hole, the right-hand screw, part of the top hook and one bottom catch.
+
+**Narrow-hole version.** `stl/flat_narrow_back_plate.stl` and `stl/flat_narrow_test_back_end.stl` are the same back plate with a 10 mm-wide cable hole, starting at the Kindle's edge, instead of 20.4 mm. Use the same front plate (`NARROW_HOLE_W` sets the width).
+
+- **Screws.** The right-hand screw is 13 mm from the case's right edge.
+  - **Wall-box screws.** Both are countersunk flush on the Kindle side, because the left one sits under the Kindle. Use flat countersunk M3.5 × 0.6 screws; a raised head would touch the Kindle. Tighten them just snug, because the bracket lugs sit back inside the cutout.
+  - **Anchor screw.** A third countersunk hole, 20 mm from the left edge, takes a 4 mm (#8) countersunk screw into a plasterboard anchor. To place the anchor, fit the plate on the box screws and mark through the hole.
+- **Cable hole.** It's 20.4 × 55 mm. It runs from the Kindle's right edge to 8 mm short of the right-hand screw, and is centred on the screws to match the 55 mm wall-box opening. The 37 mm pocket leaves room to loop the cable from the 90° plug (up or down) before it drops into the hole.
+- **Back panel.** It's 3 mm thick.
+  - **Pads.** The wall side has eight 0.4 mm-deep recesses for 12.7 mm stick-on bumper pads, about 1 mm thick, so the plate bridges small bumps in the wall. They're stick-on rather than printed: printed pads would leave the rest of the panel's underside hanging in the air.
+- **Front plate.** It hooks over the top and clips at the bottom.
+  - **Hook.** A rib along the inside of the top skirt engages a groove along the back plate's top wall.
+  - **Catches.** Two catches on the bottom skirt click into grooves.
+  - **Fitting it.** Hold the front plate tilted, bottom edge out, and about 1.5 mm higher than its final position. Rest it on the top wall and slide it down so the hook drops into its groove. Then swing the bottom in until the catches click. The tilt that works is about 4–10°; a chamfer along the top ledge makes room for it.
+  - **Removing it.** Pull the bottom out using the finger scoop, then lift the plate off the hook.
+
+![Section through the hook and a catch](flat_section.png)
+
+```bash
+python case_flat.py
+```

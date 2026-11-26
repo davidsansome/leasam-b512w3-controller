@@ -17,14 +17,12 @@ import numpy as np
 import manifold3d as m3d
 from manifold3d import CrossSection, JoinType, Manifold
 
-# --- Kindle (landscape, USB port and power button on the right-hand end) ---
+# --- Kindle (landscape, USB port on the right-hand end) ---
 K_W, K_H, K_D = 167.0, 116.0, 8.4
 SCREEN_LEFT, SCREEN_RIGHT = 20.0, 23.5   # Kindle edge to active area
 SCREEN_TOP, SCREEN_BOTTOM = 13.0, 13.0   # assumed centred vertically
 OPEN_MARGIN = 0.75                       # front opening beyond the active area
 USB_FROM_TOP = 65.1 + 7.3 / 2           # centre of the micro-USB port (65.1-72.4)
-POWER_FROM_TOP = 41.5 + 7.6 / 2          # centre of the power button (41.5-49.1)
-POWER_NOTCH_H = 20.0                     # height of the finger notch
 
 # --- Fit ---
 CLR = 0.4             # Kindle to pocket walls, each side
@@ -35,11 +33,11 @@ SKIRT_CLR = 0.15      # front plate skirt to back plate wall
 WALL = 4.0            # side wall thickness (lower part, below the seam)
 BACK = 3.0            # panel against the wall
 GAP = 6.0             # cable space behind the Kindle
-POCKET = 9.0          # space beyond the Kindle's right edge for the flat USB plug (7.5 mm)
+POCKET = 17.0         # space beyond the Kindle's right edge for the USB plug (15.5 mm)
 LEDGE = 5.0           # width of the ledges the Kindle rests on
 STOP_W = 3.0          # right-hand stops that locate the Kindle in the pocket
-TOP_STOP = (8.0, 22.0)     # from the Kindle's top edge (above the power button)
-BOTTOM_STOP = (5.0, 13.0)  # from the bottom edge (leaves the cable room below the plug)
+TOP_STOP = (8.0, 22.0)     # from the Kindle's top edge (well clear of the port)
+BOTTOM_STOP = (5.0, 13.0)  # from the bottom edge (leaves the cable room either side of the plug)
 SCREW_X = 42.0        # 84 mm screw centres
 SCREW_D = 4.0         # M3.5 clearance
 SCREW_SLOT = 1.0      # horizontal slack each way
@@ -82,7 +80,6 @@ IY0, IY1 = KY0 - CLR, KY1 + CLR
 Z_BUMP = Z_SEAM + 0.2 + 1.2
 TABS_X = [0.0, -(W / 2 - 28), W / 2 - 28]
 USB_Y = KY1 - USB_FROM_TOP
-POWER_Y = KY1 - POWER_FROM_TOP
 
 
 # --- Helpers ---
@@ -185,13 +182,7 @@ def back_plate():
         adds.append(box(KX1 + CLR, KX1 + CLR + STOP_W, ya, yb, BACK - 0.01, Z_TOP))
     body = body + Manifold.batch_boolean(adds, m3d.OpType.Add)
 
-    return body - power_notch(KX1 + CLR)
-
-
-def power_notch(x_from):
-    """Finger notch over the power button, open to the front and the side."""
-    return rbox(x_from, X1 + 10, POWER_Y - POWER_NOTCH_H / 2, POWER_Y + POWER_NOTCH_H / 2,
-                Z_SEAM, Z_FRONT + 1, 3)
+    return body
 
 
 def front_plate():
@@ -229,7 +220,6 @@ def front_plate():
         pts += [(x, y, z) for p in poly for x, y in p]
     cuts.append(Manifold.hull_points(pts))
 
-    cuts.append(power_notch(KX1 + CLR))
     return body - Manifold.batch_boolean(cuts, m3d.OpType.Add)
 
 
@@ -249,8 +239,8 @@ def for_print_front(part):
 
 
 def test_piece(part, x_from):
-    """Right-hand end only: checks the Kindle fit, the plug pocket, the power
-    notch and one pair of snap tabs."""
+    """Right-hand end only: checks the Kindle fit, the plug pocket, the stops
+    and one pair of snap tabs."""
     return part.trim_by_plane((1, 0, 0), x_from)
 
 
