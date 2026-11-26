@@ -9,8 +9,10 @@ Generates printable STLs with manifold3d (pip install manifold3d numpy trimesh):
 
     python case_flat.py       # writes stl/flat_*.stl
 
-It also writes a narrow-hole variant of the back plate (stl/flat_narrow_*.stl),
-with a 10 mm cable hole; it uses the same front plate.
+    python case_flat.py narrow  # writes stl/flat_narrow_*.stl
+
+The narrow variant is 10.4 mm narrower: the pocket shrinks, the Kindle moves
+right relative to the screws and the cable hole narrows to 10 mm.
 
 Coordinates (assembled, as mounted): origin at the midpoint between the two
 wall-box screws on the wall surface, x to the right, y up, z out of the wall.
@@ -22,6 +24,8 @@ import os
 import sys
 
 import numpy as np
+
+NARROW = "narrow" in sys.argv[1:]
 import manifold3d as m3d
 from manifold3d import CrossSection, JoinType, Manifold
 
@@ -39,7 +43,7 @@ SKIRT_CLR = 0.15      # front plate skirt to back plate wall
 # --- Back plate ---
 WALL = 4.0            # side wall thickness (lower part, below the seam)
 BACK = 3.0            # panel against the wall; the Kindle lies on it
-POCKET = 37.0         # space beyond the Kindle's right edge for the 90 degree plug
+POCKET = 26.6 if NARROW else 37.0  # space beyond the Kindle's right edge for the 90 degree plug
                       # (15.5 mm) and a loop of cable
 STOP_W = 3.0          # right-hand stops that locate the Kindle sideways
 TOP_STOP = (8.0, 22.0)     # from the Kindle's top edge
@@ -54,7 +58,6 @@ WALL_SCREW_D = 4.5    # clearance for a 4 mm (#8) countersunk screw
 WALL_SCREW_CSK = 9.0  # countersink diameter (head ~8.4)
 CAVITY_H = 55.0       # height of the wall box opening; the cable hole spans it
 HOLE_TO_SCREW = 8.0   # cable hole's right edge to the right-hand screw centre
-NARROW_HOLE_W = 10.0  # cable hole width in the narrow-hole variant
 PAD_D = 13.0          # locating recesses for stick-on pads (12.7 mm bumpers)
 PAD_RECESS = 0.4
 OUTER_R = 5.0         # case corner radius
@@ -177,9 +180,7 @@ def countersunk(x0, x1, y, d, csk):
 
 
 # --- Parts ---
-def back_plate(hole_w=None):
-    """hole_w: cable hole width from the Kindle's edge; None runs it to
-    HOLE_TO_SCREW from the right-hand screw."""
+def back_plate():
     ch = BASE_CHAMFER
     lower = Manifold.hull_points(outline_points(ch, 0) + outline_points(0, ch) +
                                  outline_points(0, Z_SEAM))
@@ -191,8 +192,6 @@ def back_plate(hole_w=None):
 
     # Cable hole into the wall box, from the Kindle's edge towards the right screw.
     hx0, hx1, hy0, hy1 = HOLE
-    if hole_w is not None:
-        hx1 = hx0 + hole_w
     cuts.append(rbox(hx0, hx1, hy0, hy1, -1, BACK + 1, 3))
 
     # Wall-box screws (slotted) and the third screw into a plasterboard anchor.
@@ -298,21 +297,20 @@ def write_stl(part, path):
           f"{part.volume()/1000:.1f} cm3")
 
 
+PREFIX = "flat_narrow_" if NARROW else "flat_"
+
+
 def main():
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stl")
     os.makedirs(out, exist_ok=True)
     back, front = back_plate(), front_plate()
     test_x = X1 - 55
-    write_stl(for_print_back(back), os.path.join(out, "flat_back_plate.stl"))
-    write_stl(for_print_front(front), os.path.join(out, "flat_front_plate.stl"))
+    write_stl(for_print_back(back), os.path.join(out, PREFIX + "back_plate.stl"))
+    write_stl(for_print_front(front), os.path.join(out, PREFIX + "front_plate.stl"))
     write_stl(for_print_back(test_piece(back, test_x)),
-              os.path.join(out, "flat_test_back_end.stl"))
+              os.path.join(out, PREFIX + "test_back_end.stl"))
     write_stl(for_print_front(test_piece(front, test_x)),
-              os.path.join(out, "flat_test_front_end.stl"))
-    narrow = back_plate(NARROW_HOLE_W)
-    write_stl(for_print_back(narrow), os.path.join(out, "flat_narrow_back_plate.stl"))
-    write_stl(for_print_back(test_piece(narrow, test_x)),
-              os.path.join(out, "flat_narrow_test_back_end.stl"))
+              os.path.join(out, PREFIX + "test_front_end.stl"))
     return back, front
 
 

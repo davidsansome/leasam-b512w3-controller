@@ -83,7 +83,10 @@ The parameters you're most likely to need:
 
 The test pieces include the pocket, the cable hole, the right-hand screw, part of the top hook and one bottom catch.
 
-**Narrow-hole version.** `stl/flat_narrow_back_plate.stl` and `stl/flat_narrow_test_back_end.stl` are the same back plate with a 10 mm-wide cable hole, starting at the Kindle's edge, instead of 20.4 mm. Use the same front plate (`NARROW_HOLE_W` sets the width).
+**Narrow version.** `python case_flat.py narrow` writes `stl/flat_narrow_*.stl`: the same design, 10.4 mm narrower (202.4 mm).
+- **Pocket.** It's 26.6 mm, which still leaves about 11 mm past the 15.5 mm plug for the cable to loop.
+- **Kindle and hole.** The right-hand screw is still 13 mm from the edge. The Kindle sits 10.4 mm further right, so the cable hole is 10 mm wide.
+- **Front plate.** It has its own front plate, `flat_narrow_front_plate.stl`.
 
 - **Screws.** The right-hand screw is 13 mm from the case's right edge.
   - **Wall-box screws.** Both are countersunk flush on the Kindle side, because the left one sits under the Kindle. Use flat countersunk M3.5 × 0.6 screws; a raised head would touch the Kindle. Tighten them just snug, because the bracket lugs sit back inside the cutout.
