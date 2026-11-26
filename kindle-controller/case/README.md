@@ -88,6 +88,12 @@ The test pieces include the pocket, the cable hole, the right-hand screw, part o
 - **Kindle and hole.** The right-hand screw is still 13 mm from the edge. The Kindle sits 10.4 mm further right, so the cable hole is 10 mm wide.
 - **Front plate.** It has its own front plate, `flat_narrow_front_plate.stl`.
 
+**Dome-head versions.** Add `dome` (`python case_flat.py dome`, or `narrow dome`) to build versions that take the dome-head M3.5 screws that come with wall plates, instead of countersunk ones. They write `stl/flat_dome_*.stl` and `stl/flat_narrow_dome_*.stl`.
+- **Screw heads.** The two wall-box screw heads sit in flat-bottomed counterbores, 8.6 mm across and 2.7 mm deep, so they finish 0.2 mm below the panel face. They take heads up to about 8 mm across and 2.5 mm high. If yours are bigger, change `DOME_HEAD_D` and `DOME_HEAD_H`.
+- **Panel.** The panel is 4.2 mm instead of 3 mm, which leaves 1.5 mm of plastic under each head. The case stands 14.8 mm off the wall instead of 13.6.
+- **Anchor screw.** The third screw is still countersunk, because 8g countersunk wood screws are easy to buy.
+- **Front plate.** Each dome version has its own front plate, because the back plate is taller.
+
 - **Screws.** The right-hand screw is 13 mm from the case's right edge.
   - **Wall-box screws.** Both are countersunk flush on the Kindle side, because the left one sits under the Kindle. Use flat countersunk M3.5 × 0.6 screws; a raised head would touch the Kindle. Tighten them just snug, because the bracket lugs sit back inside the cutout.
   - **Anchor screw.** A third countersunk hole, 20 mm from the left edge, takes a 4 mm (#8) countersunk screw into a plasterboard anchor. To place the anchor, fit the plate on the box screws and mark through the hole.

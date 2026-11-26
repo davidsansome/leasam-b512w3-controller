@@ -14,6 +14,11 @@ Generates printable STLs with manifold3d (pip install manifold3d numpy trimesh):
 The narrow variant is 10.4 mm narrower: the pocket shrinks, the Kindle moves
 right relative to the screws and the cable hole narrows to 10 mm.
 
+Add "dome" (python case_flat.py dome, or narrow dome) for versions that take
+the dome-head M3.5 screws supplied with wall plates instead of countersunk
+ones: the wall-box screw heads sit in counterbores, so the panel is thicker.
+These write stl/flat_dome_*.stl and stl/flat_narrow_dome_*.stl.
+
 Coordinates (assembled, as mounted): origin at the midpoint between the two
 wall-box screws on the wall surface, x to the right, y up, z out of the wall.
 All dimensions in mm.
@@ -26,6 +31,8 @@ import sys
 import numpy as np
 
 NARROW = "narrow" in sys.argv[1:]
+DOME = "dome" in sys.argv[1:]
+
 import manifold3d as m3d
 from manifold3d import CrossSection, JoinType, Manifold
 
@@ -42,7 +49,7 @@ SKIRT_CLR = 0.15      # front plate skirt to back plate wall
 
 # --- Back plate ---
 WALL = 4.0            # side wall thickness (lower part, below the seam)
-BACK = 3.0            # panel against the wall; the Kindle lies on it
+BACK = 4.2 if DOME else 3.0  # panel against the wall; the Kindle lies on it
 POCKET = 26.6 if NARROW else 37.0  # space beyond the Kindle's right edge for the 90 degree plug
                       # (15.5 mm) and a loop of cable
 STOP_W = 3.0          # right-hand stops that locate the Kindle sideways
@@ -53,6 +60,8 @@ SCREW_TO_EDGE = 13.0  # right-hand screw centre to the case's right edge
 SCREW_D = 3.8         # M3.5 clearance
 SCREW_CSK = 7.4       # countersink diameter at the panel face (M3.5 head 6.9)
 SCREW_SLOT = 1.0      # horizontal slack each way
+DOME_HEAD_D = 8.6     # counterbore for dome-head screws (head up to ~8 mm across)
+DOME_HEAD_H = 2.7     # counterbore depth (head up to ~2.5 mm high), 0.2 below the face
 WALL_SCREW_FROM_LEFT = 20.0  # third screw, into a plasterboard anchor
 WALL_SCREW_D = 4.5    # clearance for a 4 mm (#8) countersunk screw
 WALL_SCREW_CSK = 9.0  # countersink diameter (head ~8.4)
@@ -179,6 +188,16 @@ def countersunk(x0, x1, y, d, csk):
     return hole + Manifold.hull(cone[0] + cone[1]) if x1 > x0 else hole + cone[0]
 
 
+def counterbored(x0, x1, y, d, head_d, head_h):
+    """Through hole (slotted from x0 to x1) with a flat-bottomed counterbore on
+    the Kindle side of the panel, so a dome head sits below the panel face."""
+    hole = Manifold.extrude(rrect(x0 - d / 2, x1 + d / 2, y - d / 2, y + d / 2, d / 2),
+                            BACK + 2).translate((0, 0, -1))
+    bore = Manifold.extrude(rrect(x0 - head_d / 2, x1 + head_d / 2, y - head_d / 2,
+                                  y + head_d / 2, head_d / 2), head_h + 1)
+    return hole + bore.translate((0, 0, BACK - head_h))
+
+
 # --- Parts ---
 def back_plate():
     ch = BASE_CHAMFER
@@ -196,7 +215,11 @@ def back_plate():
 
     # Wall-box screws (slotted) and the third screw into a plasterboard anchor.
     for sx in (-SCREW_X, SCREW_X):
-        cuts.append(countersunk(sx - SCREW_SLOT, sx + SCREW_SLOT, 0, SCREW_D, SCREW_CSK))
+        if DOME:
+            cuts.append(counterbored(sx - SCREW_SLOT, sx + SCREW_SLOT, 0, SCREW_D,
+                                     DOME_HEAD_D, DOME_HEAD_H))
+        else:
+            cuts.append(countersunk(sx - SCREW_SLOT, sx + SCREW_SLOT, 0, SCREW_D, SCREW_CSK))
     cuts.append(countersunk(WALL_SCREW_X, WALL_SCREW_X, 0, WALL_SCREW_D, WALL_SCREW_CSK))
 
     # Locating recesses for stick-on pads on the wall side.
@@ -297,7 +320,7 @@ def write_stl(part, path):
           f"{part.volume()/1000:.1f} cm3")
 
 
-PREFIX = "flat_narrow_" if NARROW else "flat_"
+PREFIX = "flat_" + ("narrow_" if NARROW else "") + ("dome_" if DOME else "")
 
 
 def main():
