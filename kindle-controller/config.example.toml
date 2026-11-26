@@ -53,7 +53,8 @@ weather = "weather.forecast_home"
 [aircon]
 # The HA device the entities below are on. They're then found on it even if HA renames them
 # (e.g. to switch.aircon_power_2 after re-adding the device); the ids below are just tried
-# first. Leave it out to use exactly these ids.
+# first. Leave it out to use exactly these ids. A device renamed in HA goes by its new name
+# only, so rename any second "Aircon" (a board on the bench, say) to keep it out.
 device = "Aircon"
 power = "switch.aircon_power"
 mode = "select.aircon_mode"

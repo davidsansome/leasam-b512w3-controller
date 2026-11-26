@@ -170,8 +170,10 @@ struct RegEntity {
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     entities: Vec<RegEntity>,
-    /// device id → names it goes by (user-given and integration-given).
-    devices: HashMap<String, Vec<String>>,
+    /// device id → the name it goes by: the user's name if it's been renamed in HA, otherwise
+    /// the integration's. A renamed device no longer answers to its old name, so renaming a
+    /// second "Aircon" (e.g. a board on the bench) takes it out of the running.
+    devices: HashMap<String, String>,
 }
 
 impl Registry {
@@ -199,8 +201,8 @@ impl Registry {
             .into_iter()
             .flatten()
             .filter_map(|d| {
-                let names = [&d["name_by_user"], &d["name"]].into_iter().filter_map(s).collect();
-                Some((s(&d["id"])?, names))
+                let name = s(&d["name_by_user"]).or_else(|| s(&d["name"]))?;
+                Some((s(&d["id"])?, name))
             })
             .collect();
         Self { entities, devices }
@@ -217,7 +219,7 @@ impl Registry {
                 e.device_id
                     .as_ref()
                     .and_then(|d| self.devices.get(d))
-                    .is_some_and(|names| names.iter().any(|n| n.trim().eq_ignore_ascii_case(device)))
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(device))
             })
             .filter(|e| role.domains().contains(&e.entity_id.split('.').next().unwrap_or("")))
             .filter(|e| {
@@ -400,6 +402,28 @@ mod tests {
         let mut states = states;
         states.get_mut("switch.aircon_power").unwrap().state = "unavailable".into();
         assert_eq!(c.choose(&states).power, "switch.aircon_power_2");
+    }
+
+    #[test]
+    fn a_device_renamed_in_ha_no_longer_answers_to_its_old_name() {
+        // Two boards both called "Aircon" by the integration; the one on the bench renamed.
+        let r = Registry::parse(
+            &json!([
+                {"entity_id": "switch.aircon_power", "unique_id": "aircon_aaaa_power", "device_id": "installed", "original_name": "Power", "disabled_by": null},
+                {"entity_id": "switch.aircon_power_2", "unique_id": "aircon_bbbb_power", "device_id": "bench", "original_name": "Power", "disabled_by": null},
+            ]),
+            &json!([
+                {"id": "installed", "name": "Aircon", "name_by_user": null},
+                {"id": "bench", "name": "Aircon", "name_by_user": "Aircon prototype"},
+            ]),
+        );
+        assert_eq!(r.candidates("Aircon", Role::Power), ["switch.aircon_power"]);
+        assert_eq!(r.candidates("Aircon prototype", Role::Power), ["switch.aircon_power_2"]);
+        // Even with the installed board unavailable, the bench board isn't picked.
+        let c = Candidates::new(&configured(), Some((&r, "Aircon")));
+        let mut states = live(&["switch.aircon_power", "switch.aircon_power_2"]);
+        states.get_mut("switch.aircon_power").unwrap().state = "unavailable".into();
+        assert_eq!(c.choose(&states).power, "switch.aircon_power");
     }
 
     #[test]
