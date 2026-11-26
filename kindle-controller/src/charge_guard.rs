@@ -15,6 +15,13 @@
 //! its own limit again on every plug-in and the chip resets on reboot, so the fix is
 //! re-applied whenever it's needed.
 //!
+//! With the adaptive limit off, the chip doesn't stop current flowing backwards: once the
+//! cable is unplugged, the battery holds the Kindle's own USB port at about 3.8 V, so the
+//! unplug is never detected and the Kindle keeps showing "charging" while it drains. So
+//! while the fix is in place, a VBUS reading below 4.3 V means the cable has gone, and the
+//! adaptive limit is turned back on. VBUS then falls away, and the driver sees the unplug
+//! and sets its own limit again.
+//!
 //! Register map: `include/linux/mfd/bd71827.h` and `drivers/power/bd71827-power.c` in the
 //! Kindle (rex) kernel. Registers are read and written through the driver's own
 //! `registers` sysfs file.
@@ -23,6 +30,7 @@ use log::{info, warn};
 
 const REGISTERS: &str = "/sys/class/power_supply/bd71827_bat/registers";
 const CAPACITY: &str = "/sys/class/power_supply/bd71827_bat/capacity";
+const VBUS: &str = "/sys/class/power_supply/bd71827_ac/voltage_now";
 
 const REG_SYS_INIT: u8 = 0x38;
 const REG_CHG_STATE: u8 = 0x39;
@@ -38,6 +46,12 @@ const CHG_STATE_SUSPEND: u8 = 0x00;
 /// DCIN_SET: input enabled (bit 7), adaptive limit off (bit 6 clear), limit field 1
 /// (the driver writes `(mA - 1) / 50`, so 1 means 100 mA).
 const DCIN_SET_FIXED_100MA: u8 = 0x81;
+/// DCIN_SET: adaptive input limit on.
+const DCIN_ILIM_EN: u8 = 0x40;
+
+/// Below this (µV) with the fix in place, the cable has been unplugged: the board holds
+/// VBUS at about 5.0 V at 100 mA, and the battery back-feeds it at about 3.8 V.
+const UNPLUGGED_BELOW_UV: u32 = 4_300_000;
 
 /// How many checks in a row the charger must be stuck before we step in.
 const STUCK_CHECKS: u8 = 2;
@@ -47,6 +61,15 @@ pub struct ChargeGuard {
     stuck: u8,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    None,
+    /// Stuck: set the fixed 100 mA limit and reset the charger.
+    Fix,
+    /// Unplugged with the fix still in place: turn the adaptive limit back on.
+    Undo,
+}
+
 impl ChargeGuard {
     /// Call about once a minute.
     pub fn check(&mut self) {
@@ -54,34 +77,51 @@ impl ChargeGuard {
             return; // not a BD71827 Kindle (or not running on the Kindle at all)
         };
         let capacity = std::fs::read_to_string(CAPACITY).ok().and_then(|c| c.trim().parse::<u8>().ok());
-        if !self.update(&regs, capacity) {
-            return;
-        }
-        info!(
-            "charger suspended with power present (DCIN_SET 0x{:02X}): setting a fixed 100 mA input limit",
-            regs.get(REG_DCIN_SET).unwrap_or(0)
-        );
-        if let Err(e) = apply_fix() {
-            warn!("couldn't apply the charging fix: {e:#}");
+        let vbus_uv = std::fs::read_to_string(VBUS).ok().and_then(|v| v.trim().parse::<u32>().ok());
+        let set = regs.get(REG_DCIN_SET).unwrap_or(0);
+        let result = match self.update(&regs, capacity, vbus_uv) {
+            Action::None => return,
+            Action::Fix => {
+                info!("charger suspended with power present (DCIN_SET 0x{set:02X}): setting a fixed 100 mA input limit");
+                apply_fix()
+            }
+            Action::Undo => {
+                info!(
+                    "VBUS {} mV with the fixed input limit in place: cable unplugged, turning the adaptive limit back on",
+                    vbus_uv.unwrap_or(0) / 1000
+                );
+                write_reg(REG_DCIN_SET, set | DCIN_ILIM_EN)
+            }
+        };
+        if let Err(e) = result {
+            warn!("couldn't change the charger's input limit: {e:#}");
         }
     }
 
-    /// Whether to apply the fix now, given this check's readings.
-    fn update(&mut self, regs: &Registers, capacity: Option<u8>) -> bool {
+    /// What to do now, given this check's readings.
+    fn update(&mut self, regs: &Registers, capacity: Option<u8>, vbus_uv: Option<u32>) -> Action {
+        let set = regs.get(REG_DCIN_SET);
+        if set == Some(DCIN_SET_FIXED_100MA) {
+            // The fix is in place. If it's still suspended with power present, something
+            // else is wrong, and resetting the charger every minute won't help; just watch
+            // for the cable going.
+            self.stuck = 0;
+            return match vbus_uv {
+                Some(v) if v < UNPLUGGED_BELOW_UV => Action::Undo,
+                _ => Action::None,
+            };
+        }
         let stuck = matches!(
-            (regs.get(REG_DCIN_STAT), regs.get(REG_CHG_STATE), regs.get(REG_DCIN_SET)),
-            (Some(dcin), Some(CHG_STATE_SUSPEND), Some(set))
-                if dcin & DCIN_DET != 0
-                    // Already applied: if it's still suspended, something else is wrong,
-                    // and resetting the charger every minute won't help.
-                    && set != DCIN_SET_FIXED_100MA
-        ) && capacity.is_none_or(|c| c < 100);
+            (regs.get(REG_DCIN_STAT), regs.get(REG_CHG_STATE)),
+            (Some(dcin), Some(CHG_STATE_SUSPEND)) if dcin & DCIN_DET != 0
+        ) && set.is_some()
+            && capacity.is_none_or(|c| c < 100);
         self.stuck = if stuck { self.stuck.saturating_add(1) } else { 0 };
         if self.stuck >= STUCK_CHECKS {
             self.stuck = 0;
-            true
+            Action::Fix
         } else {
-            false
+            Action::None
         }
     }
 }
@@ -138,43 +178,62 @@ mod tests {
         assert_eq!(r.get(0x3C), None);
     }
 
+    const BOARD_UV: Option<u32> = Some(5_100_000);
+
     #[test]
     fn fixes_a_suspended_charger_on_the_second_check() {
         // What the Kindle showed on the tablet board: power present, suspended, 900 mA adaptive.
         let stuck = regs(0x00, 0x05, 0xD1);
         let mut g = ChargeGuard::default();
-        assert!(!g.update(&stuck, Some(42)));
-        assert!(g.update(&stuck, Some(42)));
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::None);
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::Fix);
         // Counting starts again afterwards.
-        assert!(!g.update(&stuck, Some(42)));
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::None);
     }
 
     #[test]
     fn a_charging_reading_in_between_starts_the_count_again() {
         let stuck = regs(0x00, 0x05, 0xD1);
         let mut g = ChargeGuard::default();
-        assert!(!g.update(&stuck, Some(42)));
-        assert!(!g.update(&regs(0x03, 0x01, 0xC8), Some(42)));
-        assert!(!g.update(&stuck, Some(42)));
-        assert!(g.update(&stuck, Some(42)));
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::None);
+        assert_eq!(g.update(&regs(0x03, 0x01, 0xC8), Some(42), BOARD_UV), Action::None);
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::None);
+        assert_eq!(g.update(&stuck, Some(42), BOARD_UV), Action::Fix);
     }
 
     #[test]
     fn leaves_normal_states_alone() {
         let mut g = ChargeGuard::default();
         for _ in 0..5 {
-            assert!(!g.update(&regs(0x03, 0x01, 0xC8), Some(42))); // fast charging on a PC port
-            assert!(!g.update(&regs(0x00, 0x00, 0xD1), Some(42))); // unplugged
-            assert!(!g.update(&regs(0x00, 0x05, 0xD1), Some(100))); // full
-            assert!(!g.update(&regs(0x00, 0x05, 0x81), Some(42))); // fix already applied
+            // Fast charging on a PC port.
+            assert_eq!(g.update(&regs(0x03, 0x01, 0xC8), Some(42), Some(4_590_000)), Action::None);
+            // Unplugged.
+            assert_eq!(g.update(&regs(0x00, 0x00, 0xC8), Some(42), Some(25_000)), Action::None);
+            // Full.
+            assert_eq!(g.update(&regs(0x00, 0x05, 0xD1), Some(100), BOARD_UV), Action::None);
+            // Fix applied and charging from the board.
+            assert_eq!(g.update(&regs(0x03, 0x01, 0x81), Some(42), Some(5_000_000)), Action::None);
+            // Fix applied but still suspended: don't keep resetting the charger.
+            assert_eq!(g.update(&regs(0x00, 0x05, 0x81), Some(42), BOARD_UV), Action::None);
         }
+    }
+
+    #[test]
+    fn turns_the_adaptive_limit_back_on_when_unplugged() {
+        // What the Kindle showed after unplugging with the fix in place: the battery holding
+        // its own USB port at 3.8 V, so it still looked plugged in and charging.
+        let back_fed = regs(0x03, 0x03, 0x81);
+        let mut g = ChargeGuard::default();
+        assert_eq!(g.update(&back_fed, Some(45), Some(3_805_000)), Action::Undo);
+        // No VBUS reading: leave it.
+        assert_eq!(g.update(&back_fed, Some(45), None), Action::None);
     }
 
     #[test]
     fn missing_registers_do_nothing() {
         let mut g = ChargeGuard::default();
         let empty = Registers::parse("");
-        assert!(!g.update(&empty, None));
-        assert!(!g.update(&empty, None));
+        assert_eq!(g.update(&empty, None, None), Action::None);
+        assert_eq!(g.update(&empty, None, None), Action::None);
     }
 }
