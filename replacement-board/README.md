@@ -228,7 +228,9 @@ Without it, Thermostat status reads `Idle: no rooms configured`, and Continuous 
 - **Running current is assumed to be ~100 mA.** The meter reading while running was disturbed by the meter itself. A measurement through a 1 Ω resistor would confirm it.
 - **The module is assumed to tolerate ~90–105 mA continuously,** as it did with the original pad.
 - **Frame meaning and timing:** see the notes file. Bits 2/3 are unknown, and timings are ±0.2 ms from screenshots.
-- **Charging behaviour varies by tablet.** Most Android tablets reduce their charge current when VBUS sags, but check yours on the bench (step 3).
+- **Charging behaviour varies by tablet.** Most Android tablets reduce their charge current when VBUS sags, but check yours on the bench (step 3). The Kindle Paperwhite 10th gen doesn't:
+  - With JP1 open it sees a computer port that never sets it up as a USB device, and doesn't charge. **Close JP1** so it sees a dedicated charger.
+  - Even then, its charger's adaptive input limit trips on the TPS2553's limit and suspends. The Kindle controller detects this and sets a fixed 100 mA input limit (see `kindle-controller/src/charge_guard.rs`). Measured on the bench: about +50 mA into the battery, with VBUS at 5.0 V.
 - **Part pinouts:** check Q_TX (1 G, 2 S, 3 D), BCP53 (1 B, 2 C, 3 E, tab C) and the LP2950CDT (1 IN, 2/tab GND, 3 OUT) against the actual parts you buy.
 - **LP2950 output capacitor:** some LP2950 makes need a tantalum or a minimum ESR on the output. Check the datasheet of the brand you buy against C_5V (2.2 µF ceramic).
 - **AUX:** the module side loads AUX with roughly 15k (it sits at ~3 V with the original pad). What it means is still unknown; the firmware reports it to Home Assistant.

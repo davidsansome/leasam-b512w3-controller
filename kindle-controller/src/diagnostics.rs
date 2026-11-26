@@ -17,8 +17,25 @@ pub fn collect() -> Diagnostics {
 
 /// Battery percentage and whether it's charging, for the on-screen battery icon.
 pub fn battery_status() -> (Option<u8>, bool) {
-    let charging = crate::lipc::get_int("com.lab126.powerd", "isCharging").is_some_and(|v| v != 0);
+    // The battery's own status, not powerd's isCharging: powerd says "charging" whenever
+    // USB power is present, even while the charger is suspended and the battery drains.
+    let charging = match battery_sysfs("status") {
+        Some(s) => s == "Charging",
+        None => crate::lipc::get_int("com.lab126.powerd", "isCharging").is_some_and(|v| v != 0),
+    };
     (battery_percent(), charging)
+}
+
+/// A file from the first battery under `/sys/class/power_supply`, trimmed.
+fn battery_sysfs(file: &str) -> Option<String> {
+    for entry in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+        let p = entry.path();
+        let is_battery = std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Battery");
+        if is_battery && let Ok(v) = std::fs::read_to_string(p.join(file)) {
+            return Some(v.trim().to_string());
+        }
+    }
+    None
 }
 
 fn battery_percent() -> Option<u8> {
@@ -27,14 +44,7 @@ fn battery_percent() -> Option<u8> {
         return Some(v);
     }
     // Fallback: any battery in sysfs.
-    for entry in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
-        let p = entry.path();
-        let is_battery = std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Battery");
-        if is_battery && let Ok(c) = std::fs::read_to_string(p.join("capacity")) {
-            return c.trim().parse().ok();
-        }
-    }
-    None
+    battery_sysfs("capacity")?.parse().ok()
 }
 
 fn parse_uptime(text: &str) -> Option<u64> {

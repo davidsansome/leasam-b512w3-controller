@@ -11,6 +11,7 @@
 //! extension folder); `state.json` lives next to it.
 
 mod backlight;
+mod charge_guard;
 mod clock;
 mod config;
 mod diagnostics;
@@ -210,6 +211,7 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
     let mut backlight_before_sleep = false;
     let mut outcome = Outcome::Exit;
     let mut last_battery = Instant::now();
+    let mut charge_guard = charge_guard::ChargeGuard::default();
     // The loop sleeps until an event arrives or the UI next has something time-based to
     // do (see `App::next_wakeup`), so it doesn't wake the CPU while idle.
     loop {
@@ -225,6 +227,7 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
         // Checked whenever we wake, which is at least once a minute for the clock.
         if last_battery.elapsed() >= Duration::from_secs(60) {
             last_battery = Instant::now();
+            charge_guard.check();
             let (percent, charging) = diagnostics::battery_status();
             app.set_battery(percent, charging);
         }

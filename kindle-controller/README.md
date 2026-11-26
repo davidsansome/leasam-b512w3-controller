@@ -21,7 +21,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
     - Heat/Cool/Fan/Auto tiles. A mode the select entity doesn't offer is greyed out. In Auto, the tile shows which way it's working ("Auto · Heat" or "Auto · Cool", from **Auto direction**). Auto needs the thermostat, so the Auto tile is greyed out in Continuous mode, and Continuous is greyed out in Auto.
     - Low/Medium/High fan speed.
   - **Aircon unavailable:** if the power entity is `unavailable`, the panel shows "Aircon unavailable" with when it was last seen, instead of the controls.
-  - **Right-hand column:** menu button, local time (HH:MM) and the battery (filled to the charge level, with a bolt while charging).
+  - **Right-hand column:** menu button, local time (HH:MM) and the battery (filled to the charge level, with a bolt while charging). "Charging" is the battery's own status in sysfs, not powerd's `isCharging`, which is set whenever USB power is present even if the battery is draining.
 - **Taps** show their result immediately, using a fast black/white (DU) refresh, and send the service call. The area is redrawn properly (GL16) about 1.5 s later, and the optimistic state is dropped once HA reports the real one, or after 8 s. A rejected call shows its error along the bottom. Ghosting is tracked in 32 px tiles: an area is flashed (GC16, just that area) once it has had 20 partial refreshes (`display.full_refresh_every`), and the whole screen flashes only when over half of it is due. Anything drawn against time (sparklines, the forecast) uses the minute on the clock, so redraws within a minute that change nothing on screen are skipped.
 - **Idle power:** nothing polls.
   - The HA client thread sleeps in `poll()` until HA sends something, the UI makes a service call, or a ping (every 30 s) or diagnostics update is due.
@@ -29,7 +29,8 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
     - the compressor lockout, on 10 s boundaries;
     - the reconnect countdown, on 5 s boundaries;
     - a pending tap, notice or menu timeout.
-  - The battery is read on the minute wake-up.
+  - The battery is read on the minute wake-up, and the charger is checked then too (see below).
+- **Charging from the tablet board:** the board's USB port is current-limited to about 123 mA. The Kindle's charger (ROHM BD71827) runs an adaptive input limit that trips on that limit and suspends charging until it's replugged, while powerd still reports "charging". If the charger is suspended with USB power present on two minute checks in a row (and the battery isn't full), the controller sets a fixed 100 mA input limit and resets the charger, through the driver's `registers` sysfs file. It then charges at about +50 mA. A normal charger never leaves the charger suspended, so it isn't affected. The Kindle's driver sets its own limit on every plug-in, and the chip resets on reboot, so the fix is applied again whenever it's needed. See `src/charge_guard.rs`.
   - Signals wake the loop through a pipe, so stopping is immediate.
 - **Starting up:** shows the waking house with "Starting up", and "Waiting for Wi-Fi" until the Kindle reports a connection, then "Connecting to Home Assistant". Failed attempts meanwhile aren't shown: at boot, Wi-Fi takes about 20 s to connect. If HA still isn't connected after a minute, the "Can't reach Home Assistant" screen takes over.
 - **Disconnected:** once connected, losing HA shows a full-screen "Can't reach Home Assistant" screen with the reason and a retry countdown (in 5 s steps), and retries with backoff (1 s up to 60 s). HA is pinged every 30 s, so a dead Wi-Fi link is noticed within about 50 s.
@@ -65,6 +66,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 | `src/sleep.rs` | Sleep: Wi-Fi and touch on/off, and listening for the network coming back |
 | `src/ha/` | WebSocket client, entity state tracking, mobile_app registration |
 | `src/diagnostics.rs` | battery / uptime / Wi-Fi readings |
+| `src/charge_guard.rs` | keeps the Kindle charging from the tablet board's current-limited USB port |
 | `src/ui/` | screens and touch handling (`mod.rs`), the dashboard (`dashboard.rs`), drawing helpers (`draw.rs`) |
 | `src/clock.rs` | local time and ISO timestamps |
 | `kual/aircon-controller/` | KUAL extension: launcher, supervisor and stop scripts, plus the Library launcher (`aircon-controller.sh`) and its cover (`icon.png`) |
