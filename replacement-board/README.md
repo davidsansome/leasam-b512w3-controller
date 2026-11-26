@@ -14,6 +14,7 @@ Two boards replace the Leasam B512W3 wall pad:
 | `home-assistant/blueprints/aircon_rooms.yaml` | HA blueprint that gives the thermostat its rooms and their temperatures |
 | `kicad/esp32-board/` | KiCad project, designator map and netlist for board 1 |
 | `kicad/tablet-board/` | KiCad project, designator map and netlist for board 2 |
+| `case/` | 3D-printable case for board 1 |
 | `../leasam-b512w3-notes.md` | reverse-engineering notes |
 | `breadboard-prototype.md`, `kicad/breadboard-stage1/`, `kicad/breadboard-stage2/` | breadboard test circuit, built from common parts, for checking the module accepts our frames before fabricating |
 
