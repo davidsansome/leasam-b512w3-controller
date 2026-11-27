@@ -248,6 +248,87 @@ fn unavailable_aircon_shows_no_controls() {
     assert!(app.hits.is_empty());
 }
 
+const NO_FLOW: &str = "binary_sensor.aircon_no_flow";
+
+/// A point in the no-flow panel's black heading, which is white on the normal panel.
+const IN_HEADING: (i32, i32) = (50, 515);
+
+#[test]
+fn no_flow_panel_replaces_every_aircon_control() {
+    let mut app = app();
+    assert!(app.entities_wanted().iter().any(|w| w == NO_FLOW));
+    let heat = hit_for(&app, "select.aircon_mode", "Heat");
+    let medium = hit_for(&app, "select.aircon_fan_speed", "Medium");
+    let power = hit_for(&app, "switch.aircon_power", "off");
+    assert_eq!(app.canvas.pixel(IN_HEADING.0, IN_HEADING.1), WHITE);
+
+    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "on"}}))));
+    assert!(app.no_flow());
+    // Coming up flashes the whole screen.
+    assert_eq!(app.pending_update, Some(Update::Full));
+    app.render();
+    app.pending_update = None;
+    assert_eq!(app.canvas.pixel(IN_HEADING.0, IN_HEADING.1), BLACK);
+    // The firmware keeps the whole unit off, so no aircon control can be tapped, not even
+    // power; only the rooms in the top half still can.
+    assert!(app.hits.iter().all(|h| match &h.tap {
+        Tap::Set { entity, .. } => entity == ROOM_SELECT,
+    }));
+    for spot in [heat, medium, power] {
+        assert_eq!(tap(&mut app, centre(spot)), None);
+    }
+    assert!(app.optimistic.is_empty());
+
+    // Other updates while it's up are ordinary redraws.
+    app.pending_update = None;
+    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "on"}, "sensor.lounge": {"s": "19.9"}}))));
+    assert_eq!(app.pending_update, Some(Update::Normal));
+
+    // Flow back: the controls return, with another full flash.
+    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "off"}}))));
+    assert_eq!(app.pending_update, Some(Update::Full));
+    app.render();
+    assert_eq!(app.canvas.pixel(IN_HEADING.0, IN_HEADING.1), WHITE);
+    hit_for(&app, "select.aircon_mode", "Heat");
+    hit_for(&app, "select.aircon_fan_speed", "Medium");
+    hit_for(&app, "switch.aircon_power", "off");
+}
+
+#[test]
+fn missing_or_unavailable_no_flow_entity_is_no_error() {
+    // `states` doesn't have it at all, like firmware that doesn't publish it yet.
+    let fresh = app();
+    assert!(!fresh.no_flow());
+    hit_for(&fresh, "select.aircon_mode", "Heat");
+    for state in ["unavailable", "unknown", "off"] {
+        let mut app = app();
+        app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": state}}))));
+        assert!(!app.no_flow(), "{state}");
+        assert_eq!(app.pending_update, Some(Update::Normal), "{state}");
+        app.render();
+        hit_for(&app, "select.aircon_mode", "Heat");
+    }
+    // Without the entity configured at all.
+    let mut app = App::new(dash(), AirconConfig { no_flow: None, ..aircon() }, Fonts::bitmap(), (W, H));
+    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "on"}}))));
+    assert!(!app.no_flow());
+}
+
+#[test]
+fn no_flow_while_asleep_doesnt_flash_the_sleep_screen() {
+    let mut app = app();
+    app.set_asleep(true);
+    app.pending_update = None;
+    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "on"}}))));
+    assert_ne!(app.pending_update, Some(Update::Full));
+    // Waking redraws everything, panel included.
+    app.wake();
+    app.on_ha_event(HaEvent::Connected);
+    assert_eq!(app.pending_update, Some(Update::Full));
+    app.render();
+    assert_eq!(app.canvas.pixel(IN_HEADING.0, IN_HEADING.1), BLACK);
+}
+
 #[test]
 fn lockout_counts_down_from_the_sensor_value() {
     let mut app = app();
@@ -502,6 +583,7 @@ fn preview() {
         }),
         true,
     );
+    shot("no_flow", json!({NO_FLOW: {"s": "on"}, "sensor.lockout": {"s": "0"}}), true);
     shot("no_rooms", json!({"sensor.aircon_rooms": {"s": "0", "a": {"rooms": []}}}), true);
     shot("unavailable", json!({"switch.aircon_power": {"s": "unavailable", "lc": now - 34.0 * 60.0}}), true);
     shot("disconnected", json!({}), false);

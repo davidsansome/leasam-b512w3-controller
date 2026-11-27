@@ -231,6 +231,13 @@ impl App {
         id.as_ref().filter(|id| self.entities.contains_key(*id)).cloned()
     }
 
+    /// Whether the aircon reports no condenser-water flow (its no-flow binary sensor is on),
+    /// so the firmware is keeping the whole unit off. Missing, unavailable or unknown
+    /// counts as no error: older firmware doesn't have the entity.
+    fn no_flow(&self) -> bool {
+        self.aircon.no_flow.as_ref().and_then(|id| self.entities.get(id)).is_some_and(|s| s.state == "on")
+    }
+
     /// Why the thermostat has switched the unit off, e.g. "at set point".
     fn idle_reason(&self) -> Option<String> {
         let id = self.aircon.thermostat_status.as_ref()?;
@@ -319,6 +326,7 @@ impl App {
             }
             HaEvent::Aircon(ids) => {
                 let old = self.aircon.ids();
+                let no_flow_before = self.no_flow();
                 if old != ids {
                     info!("using aircon entities {ids:?}");
                     for id in old.all() {
@@ -329,10 +337,12 @@ impl App {
                     }
                     self.aircon.set_ids(ids);
                     self.invalidate(Update::Normal);
+                    self.no_flow_changed(no_flow_before);
                 }
             }
             HaEvent::Entities(entities) => {
                 let now = clock::now();
+                let no_flow_before = self.no_flow();
                 if let Some(rooms) = entities::rooms(&entities, self.aircon.rooms.as_deref()) {
                     self.rooms = rooms;
                 }
@@ -360,6 +370,7 @@ impl App {
                 if matches!(self.screen, Screen::Dashboard) {
                     self.invalidate(Update::Normal);
                 }
+                self.no_flow_changed(no_flow_before);
             }
             HaEvent::ServiceCallFailed { call, error } => {
                 self.optimistic.remove(&call.entity_id);
@@ -386,6 +397,20 @@ impl App {
                 }
                 self.trim_history();
                 self.invalidate(Update::Normal);
+            }
+        }
+    }
+
+    /// The no-flow panel comes or goes in place of the aircon controls: flash the screen, so
+    /// neither the big black heading nor the controls leave a ghost of themselves behind.
+    fn no_flow_changed(&mut self, before: bool) {
+        let now = self.no_flow();
+        if now != before {
+            info!("{}", if now { "aircon reports no water flow" } else { "aircon water flow is back" });
+            // Asleep, a full update would flash the sleep screen again for nothing; waking
+            // redraws everything anyway.
+            if matches!(self.screen, Screen::Dashboard) && !self.asleep {
+                self.invalidate(Update::Full);
             }
         }
     }

@@ -166,7 +166,7 @@ pub struct DashboardConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AirconConfig {
-    /// Name of the HA device the aircon's power/mode/fan/lockout entities are on. When set,
+    /// Name of the HA device the aircon's power/mode/fan/lockout/no-flow entities are on. When set,
     /// they're found on that device by what they are, so the controller keeps working if
     /// HA gives them new ids (e.g. `switch.aircon_power_2` after the device is re-added).
     /// The ids below are then only tried first.
@@ -179,13 +179,18 @@ pub struct AirconConfig {
     pub fan: String,
     /// sensor: seconds until the compressor may start again.
     pub compressor_lockout: Option<String>,
+    /// binary_sensor (device class problem): on = the building's condenser-water pump isn't
+    /// proving flow, so the firmware keeps the whole unit off. While it's on, an error panel
+    /// takes the place of the aircon controls. Missing or unavailable counts as no error.
+    pub no_flow: Option<String>,
     /// switch / input_boolean: on = thermostat (set point), off = continuous.
     pub thermostat: Option<String>,
     /// number / input_number: the set point.
     pub setpoint: Option<String>,
     /// select: "Average" or the room the thermostat goes by.
     pub thermostat_room: Option<String>,
-    /// sensor: what the unit is really doing: Off, Heating, Cooling or Fan.
+    /// sensor: what the unit is really doing: Off, Heating, Cooling, Fan or No flow.
+    /// Subscribed to, but not shown: the no-flow panel goes by `no_flow` instead.
     pub operation: Option<String>,
     /// sensor: which way Auto is working: Heat or Cool.
     pub auto_direction: Option<String>,
@@ -214,6 +219,7 @@ impl AirconConfig {
             mode: self.mode.clone(),
             fan: self.fan.clone(),
             compressor_lockout: self.compressor_lockout.clone(),
+            no_flow: self.no_flow.clone(),
             thermostat: self.thermostat.clone(),
             setpoint: self.setpoint.clone(),
             thermostat_room: self.thermostat_room.clone(),
@@ -231,6 +237,7 @@ impl AirconConfig {
         self.mode = ids.mode;
         self.fan = ids.fan;
         self.compressor_lockout = ids.compressor_lockout;
+        self.no_flow = ids.no_flow;
         self.thermostat = ids.thermostat;
         self.setpoint = ids.setpoint;
         self.thermostat_room = ids.thermostat_room;
@@ -250,6 +257,7 @@ impl Default for AirconConfig {
             mode: "select.aircon_mode".into(),
             fan: "select.aircon_fan_speed".into(),
             compressor_lockout: Some("sensor.aircon_compressor_lockout".into()),
+            no_flow: Some("binary_sensor.aircon_no_flow".into()),
             thermostat: Some("switch.aircon_thermostat".into()),
             setpoint: Some("number.aircon_set_point".into()),
             thermostat_room: Some("select.aircon_thermostat_room".into()),
@@ -314,6 +322,7 @@ mod tests {
         assert_eq!(c.aircon.setpoint_step, 0.5);
         assert_eq!(c.aircon.mode_options.fan, "Fan only");
         assert_eq!(c.aircon.rooms.as_deref(), Some("sensor.aircon_rooms"));
+        assert_eq!(c.aircon.no_flow.as_deref(), Some("binary_sensor.aircon_no_flow"));
         assert_eq!(c.display.rotation, 90);
         assert_eq!(c.device.name, "Aircon Wall Controller");
     }
@@ -322,6 +331,7 @@ mod tests {
     fn example_config_parses() {
         let c = Config::parse(include_str!("../config.example.toml")).unwrap();
         assert_eq!(c.framework.mode, FrameworkMode::Stop);
+        assert_eq!(c.aircon.no_flow.as_deref(), Some("binary_sensor.aircon_no_flow"));
         assert!(c.dashboard.old_rooms.is_none());
     }
 

@@ -60,11 +60,15 @@ power = "switch.aircon_power"
 mode = "select.aircon_mode"
 fan = "select.aircon_fan_speed"
 compressor_lockout = "sensor.aircon_compressor_lockout"
+# On while the building's condenser-water pump isn't proving flow (the firmware then keeps
+# the whole unit off); the controls are replaced by an "ERROR / No water flow" panel.
+# Missing or unavailable counts as flow OK.
+no_flow = "binary_sensor.aircon_no_flow"
 # The thermostat's entities. Controls whose entity HA doesn't have are hidden.
 thermostat = "switch.aircon_thermostat"                    # on = thermostat, off = continuous
 setpoint = "number.aircon_set_point"
 thermostat_room = "select.aircon_thermostat_room"          # Average, or one room
-operation = "sensor.aircon_operation"                      # Off, Heating, Cooling or Fan
+operation = "sensor.aircon_operation"                      # Off, Heating, Cooling, Fan or No flow
 auto_direction = "sensor.aircon_auto_direction"            # Heat or Cool, while in Auto
 thermostat_status = "sensor.aircon_thermostat_status"
 thermostat_temperature = "sensor.aircon_thermostat_temperature"

@@ -21,6 +21,7 @@ pub struct AirconIds {
     pub mode: String,
     pub fan: String,
     pub compressor_lockout: Option<String>,
+    pub no_flow: Option<String>,
     pub thermostat: Option<String>,
     pub setpoint: Option<String>,
     pub thermostat_room: Option<String>,
@@ -39,6 +40,7 @@ impl AirconIds {
             Role::Mode => Some(&self.mode),
             Role::Fan => Some(&self.fan),
             Role::Lockout => self.compressor_lockout.as_ref(),
+            Role::NoFlow => self.no_flow.as_ref(),
             Role::Thermostat => self.thermostat.as_ref(),
             Role::Setpoint => self.setpoint.as_ref(),
             Role::ThermostatRoom => self.thermostat_room.as_ref(),
@@ -56,6 +58,7 @@ impl AirconIds {
             Role::Mode => self.mode = id.unwrap_or_default(),
             Role::Fan => self.fan = id.unwrap_or_default(),
             Role::Lockout => self.compressor_lockout = id,
+            Role::NoFlow => self.no_flow = id,
             Role::Thermostat => self.thermostat = id,
             Role::Setpoint => self.setpoint = id,
             Role::ThermostatRoom => self.thermostat_room = id,
@@ -78,6 +81,7 @@ pub enum Role {
     Mode,
     Fan,
     Lockout,
+    NoFlow,
     Thermostat,
     Setpoint,
     ThermostatRoom,
@@ -89,11 +93,12 @@ pub enum Role {
 }
 
 impl Role {
-    const ALL: [Role; 12] = [
+    const ALL: [Role; 13] = [
         Role::Power,
         Role::Mode,
         Role::Fan,
         Role::Lockout,
+        Role::NoFlow,
         Role::Thermostat,
         Role::Setpoint,
         Role::ThermostatRoom,
@@ -109,6 +114,7 @@ impl Role {
             Role::Power | Role::Thermostat => &["switch", "input_boolean"],
             Role::Mode | Role::Fan | Role::ThermostatRoom => &["select", "input_select"],
             Role::Setpoint => &["number", "input_number"],
+            Role::NoFlow => &["binary_sensor"],
             Role::Lockout
             | Role::Operation
             | Role::AutoDirection
@@ -125,6 +131,7 @@ impl Role {
             Role::Mode => &["_mode"],
             Role::Fan => &["_fan", "_fan_speed"],
             Role::Lockout => &["_lockout", "_compressor_lockout"],
+            Role::NoFlow => &["_no_flow"],
             Role::Thermostat => &["_thermostat"],
             Role::Setpoint => &["_setpoint"],
             Role::ThermostatRoom => &["_thermostat_room"],
@@ -143,6 +150,7 @@ impl Role {
             Role::Mode => &["mode"],
             Role::Fan => &["fan speed", "fan"],
             Role::Lockout => &["compressor lockout"],
+            Role::NoFlow => &["no water flow", "no flow"],
             Role::Thermostat => &["thermostat"],
             Role::Setpoint => &["set point"],
             Role::ThermostatRoom => &["thermostat room"],
@@ -340,6 +348,7 @@ mod tests {
                 {"entity_id": "sensor.aircon_thermostat_status_2", "unique_id": "aircon_bbbb_thermostat_status", "device_id": "d", "original_name": "Thermostat status", "disabled_by": null},
                 {"entity_id": "sensor.aircon_thermostat_temperature_2", "unique_id": "aircon_bbbb_thermostat_temperature", "device_id": "d", "original_name": "Thermostat temperature", "disabled_by": null},
                 {"entity_id": "sensor.aircon_rooms_2", "unique_id": "aircon_bbbb_rooms", "device_id": "d", "original_name": "Rooms", "disabled_by": null},
+                {"entity_id": "binary_sensor.aircon_no_flow_2", "unique_id": "aircon_bbbb_no_flow", "device_id": "d", "original_name": "No water flow", "disabled_by": null},
             ]),
             &json!([{"id": "d", "name": "Aircon", "name_by_user": null}]),
         );
@@ -355,6 +364,7 @@ mod tests {
             "sensor.aircon_thermostat_status_2",
             "sensor.aircon_thermostat_temperature_2",
             "sensor.aircon_rooms_2",
+            "binary_sensor.aircon_no_flow_2",
         ]));
         assert_eq!(ids.thermostat.as_deref(), Some("switch.aircon_thermostat_2"));
         assert_eq!(ids.setpoint.as_deref(), Some("number.aircon_set_point_2"));
@@ -364,6 +374,7 @@ mod tests {
         assert_eq!(ids.thermostat_status.as_deref(), Some("sensor.aircon_thermostat_status_2"));
         assert_eq!(ids.thermostat_temperature.as_deref(), Some("sensor.aircon_thermostat_temperature_2"));
         assert_eq!(ids.rooms.as_deref(), Some("sensor.aircon_rooms_2"));
+        assert_eq!(ids.no_flow.as_deref(), Some("binary_sensor.aircon_no_flow_2"));
     }
 
     #[test]
@@ -433,5 +444,9 @@ mod tests {
         let mut cfg = configured();
         cfg.compressor_lockout = None;
         assert_eq!(Candidates::new(&cfg, None).choose(&EntityMap::new()).compressor_lockout, None);
+        // An entity the firmware doesn't publish yet just stays at its configured id.
+        cfg.no_flow = Some("binary_sensor.aircon_no_flow".into());
+        let ids = Candidates::new(&cfg, None).choose(&EntityMap::new());
+        assert_eq!(ids.no_flow.as_deref(), Some("binary_sensor.aircon_no_flow"));
     }
 }

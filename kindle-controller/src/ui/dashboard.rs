@@ -377,6 +377,9 @@ impl App {
             }
             Some(_) => {}
         }
+        if self.no_flow() {
+            return self.draw_no_flow(r);
+        }
 
         let inner = Rect::new(r.x + 31, r.y + 25, r.w - 62, r.h - 50);
         let header = Rect::new(inner.x, inner.y, inner.w, 84);
@@ -531,6 +534,58 @@ impl App {
                     tap: Tap::Set { entity: entity.to_string(), desired: desired.clone(), call: set_call(entity, &desired) },
                 });
             }
+        }
+    }
+
+    /// In place of the aircon controls while the aircon reports no condenser-water flow (the
+    /// firmware then keeps the whole unit off, fan included): a black frame with an inverted
+    /// "ERROR" heading, big enough to read across the room, and the sad house with what's
+    /// wrong beside it. No controls are drawn, so none can be tapped.
+    fn draw_no_flow(&mut self, r: Rect) {
+        const FRAME: i32 = 8;
+        const BAND_H: i32 = 160;
+        const TITLE: &str = "ERROR";
+        self.canvas.fill_round_rect(r, 20.0, BLACK);
+        let body = Rect::new(r.x + FRAME, r.y + BAND_H, r.w - 2 * FRAME, r.h - BAND_H - FRAME);
+        self.canvas.fill_round_rect(body, 12.0, WHITE);
+        // Square off the body's top corners against the heading.
+        self.canvas.fill_rect(Rect::new(body.x, body.y, body.w, 16), WHITE);
+
+        let band = Rect::new(r.x + FRAME, r.y + FRAME, r.w - 2 * FRAME, BAND_H - FRAME);
+        let baseline = centred_baseline(&self.fonts, band, 120, Weight::Bold);
+        self.fonts.draw_centered(&mut self.canvas, TITLE, 120, Weight::Bold, band.x + band.w / 2, baseline, WHITE);
+
+        // The house on white, where its face reads better than inverted, and the text beside it.
+        let pad = 48;
+        let house = (body.h - 24).min(340);
+        icons::draw_sad_house(&mut self.canvas, body.x + pad, body.y + (body.h - house) / 2, house, BLACK);
+        let text_x = body.x + pad + house + 48;
+        let text_w = body.right() - pad - text_x;
+        let mut lines: Vec<(String, u32, Weight)> = Vec::new();
+        for (text, px, weight) in [
+            ("No water flow", 64, Weight::Bold),
+            ("The aircon is off until the building's water pump is running.", 44, Weight::Regular),
+        ] {
+            lines.extend(self.fonts.wrap(text, px, weight, text_w).into_iter().take(3).map(|l| (l, px, weight)));
+        }
+        // More space between the two sentences than between wrapped lines.
+        let (line_gap, sentence_gap) = (10, 26);
+        let gap = |i: usize, lines: &[(String, u32, Weight)]| {
+            if i == 0 { 0 } else if lines[i - 1].1 != lines[i].1 { sentence_gap } else { line_gap }
+        };
+        let total: i32 = (0..lines.len())
+            .map(|i| {
+                let (a, d) = self.fonts.line_metrics(lines[i].1, lines[i].2);
+                a + d + gap(i, &lines)
+            })
+            .sum();
+        let mut y = body.y + (body.h - total) / 2;
+        for i in 0..lines.len() {
+            y += gap(i, &lines);
+            let (line, px, weight) = &lines[i];
+            let (a, d) = self.fonts.line_metrics(*px, *weight);
+            self.fonts.draw(&mut self.canvas, line, *px, *weight, text_x, y + a, BLACK);
+            y += a + d;
         }
     }
 

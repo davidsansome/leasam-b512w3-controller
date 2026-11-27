@@ -178,6 +178,35 @@ pub fn draw_waking_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: 
     }
 }
 
+/// The same house at a loss, for the no-water-flow error: worried brows over drooping eyes,
+/// a frown, one arm hanging limp and the other hand on its roof, and a question mark over
+/// the roof. Same grid as `draw_sleeping_house`.
+pub fn draw_sad_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u8) {
+    let scale = size as f32 / 72.0;
+    let fx = x as f32 + (size as f32 - 68.0 * scale) / 2.0 + 2.0 * scale;
+    let fy = y as f32 + 6.0 * scale;
+    let w = 2.6 * scale;
+    for data in [
+        "M14 36 L32 21 L50 36M18 33 V55 H46 V33",
+        // Brows raised in the middle, then a frown.
+        "M22 36.5 L27 34M42 36.5 L37 34",
+        "M28.5 51 q3.5 -3.2 7 0",
+        // Left arm hanging limp; right arm up, elbow out, hand patting the roof.
+        "M18 45 L12 52 l-1 3.5M12 52 l-3.5 1",
+        "M46 46 Q55 43 59.5 31 Q57.5 26.5 47.5 28",
+        // A question mark over the roof.
+        "M15 8.5 a3.8 3.8 0 1 1 5.2 3.5 q-1.4 0.7 -1.4 2.7",
+    ] {
+        if let Some(p) = parse_path(data, fx, fy, scale) {
+            canvas.stroke_path(&p, w, color);
+        }
+    }
+    // Eyes, and the question mark's dot.
+    for (cx, cy, r) in [(25.5, 41.5, 1.4), (38.5, 41.5, 1.4), (45.8, 28.8, 2.0), (18.8, 19.0, 0.6)] {
+        canvas.fill_disc(fx + cx * scale, fy + cy * scale, r * scale + w / 2.0, color);
+    }
+}
+
 /// An aircon unit with a "!" badge, for "aircon unavailable".
 pub fn draw_aircon_alert(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u8, background: u8) {
     let scale = size as f32 / 48.0;
@@ -241,5 +270,8 @@ mod tests {
         let mut c = Canvas::new(100, 100);
         draw_waking_house(&mut c, 0, 0, 100, BLACK);
         assert!(c.diff_bounds(&Canvas::new(100, 100)).is_some(), "waking house drew nothing");
+        let mut c = Canvas::new(100, 100);
+        draw_sad_house(&mut c, 0, 0, 100, BLACK);
+        assert!(c.diff_bounds(&Canvas::new(100, 100)).is_some(), "sad house drew nothing");
     }
 }
