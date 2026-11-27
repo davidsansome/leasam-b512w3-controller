@@ -159,7 +159,7 @@ J_IN+ ──┬─ D_TVS SMBJ24A ── GND
 
 One sketch, [`firmware/aircon_controller/`](firmware/aircon_controller/), serves both this board and the breadboard prototype. The board is picked from the chip it's compiled for: ESP32-C3 (`esp32:esp32:esp32c3`) builds for this board, and a classic ESP32 (`esp32:esp32:esp32`) builds for the breadboard. It needs the PubSubClient library. Copy `secrets.example.h` to `secrets.h` (git ignores it) and fill in the Wi-Fi, MQTT broker and OTA password.
 
-It's controlled from Home Assistant over MQTT discovery, as an **Aircon** device: Power, Mode (Cool / Heat / Fan only / Auto), Fan speed, a Compressor running sensor, the [thermostat](#thermostat), and diagnostics. It also handles RMT frame timing, the compressor lockout, OTA (host `aircon`), Wi-Fi recovery and a loop watchdog. See the comment at the top of the sketch for the details.
+It's controlled from Home Assistant over MQTT discovery, as an **Aircon** device: Power, Mode (Cool / Heat / Fan only / Auto), Fan speed, a Compressor running sensor, a No flow problem sensor (see [flow interlock](#flow-interlock)), the [thermostat](#thermostat), and diagnostics. It also handles RMT frame timing, the compressor lockout, OTA (host `aircon`), Wi-Fi recovery and a loop watchdog. See the comment at the top of the sketch for the details.
 
 Before starting Wi-Fi, it waits up to 20 s for VRES to reach 13 V, so the reservoir is charged before Wi-Fi's current bursts. "VRES at boot" and "Boot Wi-Fi wait" report how that went.
 
@@ -181,13 +181,25 @@ The Home Assistant entities for the tablet output:
 
 AUX, VRES and the tablet output are sampled at ~1 kHz. Every 10 s the firmware publishes the mean, plus the lowest and highest single sample (AUX minimum/maximum, VRES minimum), so short dips and spikes still show up. Home Assistant's history serves as the AUX log, for spotting rare events such as a defrost or a fault. The AUX ratio on this board hasn't been calibrated against a meter yet.
 
+### Flow interlock
+
+AUX reports the building's condenser-water flow interlock. Once the central pump's flow switch proves flow, the interlock puts +24 V on the unit's VERIFY wire, and the relay module raises AUX: the firmware reported a steady 1.31 V with flow proven (whether off, fan only or cooling) and 0.56 V with VERIFY disconnected (minimum and maximum both 0.56 V). The original pad shows "E-C" when the building pump stops, so E-C is its no-flow error. The module itself still lets the compressor start without VERIFY (the original pad was presumably the interlock), and a water-loop compressor run without flow risks high head pressure, so the firmware does it:
+
+- **No flow** is a 1 s AUX mean below 0.90 V (`NO_FLOW_BELOW_V`); flow is OK again above 1.00 V (`FLOW_OK_ABOVE_V`). Either state must hold for 5 s (`FLOW_DEBOUNCE_MS`) before it counts, so mains hum and brief dips don't trip it.
+- With no flow the whole unit idles: no compressor and no fan. A running compressor stops at once, even inside the minimum run time. Power, Mode and Fan speed keep their values. **Operation** reads `No flow` whenever the unit would otherwise run.
+- Once flow is back the unit resumes, fan first; the 3-minute lockout from when the compressor stopped still applies.
+- After boot there's taken to be no flow until AUX has read OK for 5 s (the 3-minute boot lockout covers that anyway). No flow isn't published during that check, so a reboot doesn't flash the error on the wall controller; it's reported only once AUX has actually stayed low for 5 s.
+- **No flow** (`binary_sensor.aircon_no_flow`, a problem sensor) is on with no flow. The Kindle controller reads it. Changes are also logged to Serial (115200 baud).
+
+The thresholds are the same for both builds, set from the figures above. The PCB's AUX ratio isn't calibrated, so check its reported AUX with and without flow before relying on it there.
+
 A rising shed count means the tablet's draw is pushing the budget. Lower R_ILIM's current (raise R_ILIM) or check VRES. A fault count means something is wrong on the cable side.
 
 The firmware compiles for both chips (Arduino-ESP32 3.3.12). Apart from the 1 kHz sampling and the thermostat, the breadboard build is the sketch that was tested on the breadboard. The PCB-only parts (tablet output, VRES wait, pins and dividers) haven't run on a board yet.
 
 ### Thermostat
 
-With **Thermostat** on and the mode Cool or Heat, the controller switches the whole unit off ("idle") when the room temperature reaches the **Set point**, and back on once it's **Thermostat hysteresis** beyond it (above the set point when cooling, below it when heating). Power, Mode and Fan speed keep their values throughout. **Operation** shows what the unit is really doing: `Off`, `Heating`, `Cooling` or `Fan` (fan only, or the fan running while the compressor lockout holds the compressor off). With Thermostat off (continuous) the unit runs whatever the temperature, and in Fan only mode the thermostat has no effect.
+With **Thermostat** on and the mode Cool or Heat, the controller switches the whole unit off ("idle") when the room temperature reaches the **Set point**, and back on once it's **Thermostat hysteresis** beyond it (above the set point when cooling, below it when heating). Power, Mode and Fan speed keep their values throughout. **Operation** shows what the unit is really doing: `Off`, `Heating`, `Cooling`, `Fan` (fan only, or the fan running while the compressor lockout holds the compressor off) or `No flow` (the [flow interlock](#flow-interlock) holds the whole unit idle). With Thermostat off (continuous) the unit runs whatever the temperature, and in Fan only mode the thermostat has no effect.
 
 **Auto** heats or cools as needed, around one set point. It works like Heat with a set point of *Set point − Auto deadband*, or like Cool with *Set point + Auto deadband* (deadband 0.5–5 °C, default 1). With a set point of 22 °C, a 1 °C deadband and 0.5 °C hysteresis, it cools from 23.5 °C down to 23 °C, and heats from 20.5 °C up to 21 °C; in between it idles. On entering Auto (or switching the power on) it starts in the direction of the side of the set point the temperature is on. It changes direction only once the temperature is past the other direction's resume point (20.5 °C or 23.5 °C here), so it can't flip between heating and cooling near the set point. A change of direction stops the compressor, and the 3-minute lockout applies before it starts the other way. **Auto direction** shows `Heat` or `Cool` (unknown outside Auto, or before there's a temperature). Auto needs the thermostat: with Thermostat off (continuous), the unit stays idle.
 
@@ -234,4 +246,4 @@ Without it, Thermostat status reads `Idle: no rooms configured`, and Continuous 
   - Even then, its charger's adaptive input limit trips on the TPS2553's limit and suspends. The Kindle controller detects this and sets a fixed 100 mA input limit (see `kindle-controller/src/charge_guard.rs`). Measured on the bench: about +50 mA into the battery, with VBUS at 5.0 V.
 - **Part pinouts:** check Q_TX (1 G, 2 S, 3 D), BCP53 (1 B, 2 C, 3 E, tab C) and the LP2950CDT (1 IN, 2/tab GND, 3 OUT) against the actual parts you buy.
 - **LP2950 output capacitor:** some LP2950 makes need a tantalum or a minimum ESR on the output. Check the datasheet of the brand you buy against C_5V (2.2 µF ceramic).
-- **AUX:** the module side loads AUX with roughly 15k (it sits at ~3 V with the original pad). What it means is still unknown; the firmware reports it to Home Assistant.
+- **AUX:** the module side loads AUX with roughly 15k (it sits at ~3 V with the original pad). It reports the condenser-water flow interlock (VERIFY), and the firmware acts on it: see [Flow interlock](#flow-interlock). Whether it carries anything else (a fault, a defrost) is still unknown.

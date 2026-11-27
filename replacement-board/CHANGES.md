@@ -91,5 +91,6 @@ The firmware will be rewritten later. Interim changes:
 ### Not changed, still open
 
 - ~~**Thermostat:** room temperature will come from a separate Wi-Fi sensor, outside this design. The firmware rewrite needs a setpoint, hysteresis and a fallback for when the sensor goes quiet.~~ Done since: the firmware has a thermostat (set point, hysteresis, minimum run time, idle with no fresh reading), fed with room temperatures from HA by the *Aircon rooms* blueprint. See [README §3, Thermostat](README.md#thermostat).
-- **What AUX means**, what the module does when frames stop, and what bits 2/3 mean (probably zones, going by SW1's ZONES options). These need testing.
+- ~~**What AUX means**~~ Found since: AUX reports the condenser-water flow interlock (VERIFY), about 1.3 V with flow and 0.6 V without (the original pad's "E-C" is the no-flow error), and the firmware now idles the whole unit with no flow. See [README §3, Flow interlock](README.md#flow-interlock). Whether AUX carries anything else is still unknown.
+- What the module does when frames stop, and what bits 2/3 mean (probably zones, going by SW1's ZONES options). These need testing.
 - The new parts were added on spare areas of the schematic sheet. Open it in KiCad to tidy the placement and run ERC.

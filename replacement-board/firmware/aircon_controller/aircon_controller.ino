@@ -14,13 +14,21 @@
 // Control is through Home Assistant, using MQTT discovery. The device "Aircon" appears
 // under Settings > Devices once the MQTT integration is set up, with:
 //   Power (switch), Mode (select: Cool / Heat / Fan only / Auto), Fan speed (select: Low / Medium / High),
-//   Compressor (binary sensor, running), and diagnostics: AUX voltage with its minimum and maximum,
-//   VRES and VRES minimum, Wi-Fi signal, Compressor lockout (seconds until the compressor may start),
-//   Uptime, Last restart reason, Wi-Fi reconnects and Last Wi-Fi disconnect.
+//   Compressor (binary sensor, running), No flow (binary sensor, problem), and diagnostics:
+//   AUX voltage with its minimum and maximum, VRES and VRES minimum, Wi-Fi signal, Compressor
+//   lockout (seconds until the compressor may start), Uptime, Last restart reason, Wi-Fi
+//   reconnects and Last Wi-Fi disconnect.
 // On the PCB there is also a Tablet output switch, its status, voltage and shed/fault counts,
 // and VRES at boot / Boot Wi-Fi wait.
 // Power always starts off after a reboot or power cut. The last mode and fan speed are kept.
 // The compressor is held off for 3 minutes after boot and after it last stopped.
+// No-flow interlock: the building's condenser-water pump interlock puts +24 V on the unit's
+// VERIFY wire once its flow switch proves flow, and the relay module reports that on AUX. The
+// module still lets the compressor start without it (the original pad was presumably the
+// interlock, and shows "E-C" when the building pump stops), so this sketch is now: with AUX low
+// ("No flow") the whole unit idles, compressor and fan, and a running compressor stops at once,
+// minimum run time or not. Until AUX has read OK for FLOW_DEBOUNCE_MS after boot, there is
+// taken to be no flow.
 //
 // Thermostat (thermostat.h): Thermostat (switch: on = thermostat, off = continuous), Set point,
 // Thermostat room (select: Average or one room), and config entities Thermostat hysteresis,
@@ -106,6 +114,14 @@ const uint8_t HEAT_BIT     = bitMask(7);
 
 // ---------- protection ----------
 constexpr uint32_t COMPRESSOR_MIN_OFF_MS = 3UL * 60UL * 1000UL;
+// Flow interlock, on the 1 s AUX mean. Measured as reported by this sketch: 1.31 V with flow
+// proven, 0.56 V with VERIFY disconnected. One threshold for both boards; the PCB's AUX_RATIO
+// isn't calibrated yet, so check its reported AUX in both states before trusting it there.
+// Both were steady (1.31 V whether off, fan only or cooling; min = max at 0.56 V).
+// The gap between the two is hysteresis; the debounce rides out brief dips.
+constexpr float    NO_FLOW_BELOW_V  = 0.90f;   // flow OK -> no flow below this...
+constexpr float    FLOW_OK_ABOVE_V  = 1.00f;   // ...no flow -> flow OK above this
+constexpr uint32_t FLOW_DEBOUNCE_MS = 5000;    // the new state must hold this long
 
 // ---------- thermostat ----------
 constexpr uint32_t ROOM_STALE_MS   = 5UL * 60UL * 1000UL;   // HA re-sends every minute
@@ -155,6 +171,9 @@ Fan  fan  = FAN_LOW;
 volatile uint8_t frameBits = 0;        // what is being sent (read by the TX task)
 bool compRunning = false, runHeat = false;
 uint32_t compOffSince = 0, compOnSince = 0;
+bool flowOk = false;                   // no flow until AUX proves it (safe at boot)
+bool flowKnown = false;                // AUX has held one state for FLOW_DEBOUNCE_MS since boot
+bool noFlowHold = false;               // the unit would run, but no flow holds it idle
 
 // Thermostat settings (saved).
 bool thermostatOn = false;
@@ -195,7 +214,8 @@ inline bool before(uint32_t now, uint32_t t) { return (int32_t)(now - t) < 0; }
 // A task reads AUX, VRES and (PCB) the tablet output at ~1 kHz. Every 10 ms it updates the
 // short-term readings the tablet manager uses, and adds to the window that loop() publishes
 // every AUX_PUBLISH_MS. The window's min and max are single samples, so brief dips and spikes
-// show up in them.
+// show up in them. It also keeps a 1 s AUX mean for the flow interlock: long enough to average
+// out any mains hum or noise on AUX.
 struct Window {
   float auxSum, auxMin, auxMax;
   float vresSum, vresMin;
@@ -207,10 +227,14 @@ struct Window {
 portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
 Window window;
 volatile float vresNow = 0, vtabNow = 0;   // 10 ms means
+volatile float auxSecond = NAN;            // 1 s mean; NAN until the first second is in
+volatile uint32_t auxSecondCount = 0;      // bumped with each new 1 s mean
 
 float readVolts(int pin, float ratio) { return analogReadMilliVolts(pin) / 1000.0f * ratio; }
 
 void samplerTask(void*) {
+  float secSum = 0;
+  uint32_t secN = 0, secStart = millis();
   for (;;) {
     Window b;
     b.reset();
@@ -236,6 +260,12 @@ void samplerTask(void*) {
     portEXIT_CRITICAL(&sampleMux);
     vresNow = b.vresSum / b.n;
     vtabNow = b.vtabSum / b.n;
+    secSum += b.auxSum; secN += b.n;
+    if (millis() - secStart >= 1000) {
+      auxSecond = secSum / secN;
+      auxSecondCount = auxSecondCount + 1;   // only this task writes it
+      secSum = 0; secN = 0; secStart = millis();
+    }
   }
 }
 
@@ -288,13 +318,19 @@ uint8_t requestedBits() {
   return b;
 }
 
-// Runs the thermostat, applies the compressor lockout and builds the frame that is actually sent.
+// Runs the thermostat, applies the compressor lockout and flow interlock, and builds the frame
+// that is actually sent.
 void updateFrame() {
   updateThermostat();
   uint8_t req = requestedBits();
+  // No flow idles the whole unit, fan too, and stops the compressor regardless of the minimum
+  // run time: running without condenser water risks high head pressure. Power, mode and fan
+  // keep their values, so it resumes (after the usual lockout) once flow is back.
+  noFlowHold = req && !flowOk && flowKnown;   // not reported during the boot check
+  if (!flowOk) req = 0;
   bool wantComp = req & COMP_BITS;
   bool wantHeat = req & HEAT_BIT;
-  if (compRunning && (!wantComp || wantHeat != runHeat)) {   // stop, incl. heat <-> cool
+  if (compRunning && (!wantComp || wantHeat != runHeat)) {   // stop, incl. heat <-> cool and no flow
     compRunning = false;
     compOffSince = millis();
   } else if (!compRunning && wantComp && lockoutRemainingMs() == 0) {
@@ -305,6 +341,47 @@ void updateFrame() {
   uint8_t b = req & ~(COMP_BITS | HEAT_BIT);
   if (compRunning) b |= req & (COMP_BITS | HEAT_BIT);
   frameBits = b;
+}
+
+void publishStatus(bool force);
+
+// Debounces the flow state from each new 1 s AUX mean. Acts at once on a change, rather than
+// waiting for loop()'s next 1 s update.
+void updateFlow() {
+  static uint32_t lastCount = 0, changeSince = 0, sameSince = 0;
+  static bool pending = false, same = false;
+  uint32_t c = auxSecondCount;
+  if (c == lastCount) return;
+  lastCount = c;
+  float a = auxSecond;
+  bool ok = flowOk ? a >= NO_FLOW_BELOW_V : a > FLOW_OK_ABOVE_V;
+  uint32_t now = millis();
+  if (ok == flowOk) {
+    pending = false;
+    // At boot flowOk starts false without a reading behind it. Only report No flow once AUX has
+    // actually stayed low for the debounce time, so a reboot doesn't flash the error on the
+    // wall controller. The unit is held idle either way.
+    if (!flowKnown) {
+      if (!same) { same = true; sameSince = now; }
+      if (now - sameSince >= FLOW_DEBOUNCE_MS) {
+        flowKnown = true;
+        Serial.printf("[%lu s] No flow (AUX %.2f V): unit held idle\n", (unsigned long)(now / 1000), a);
+        updateFrame();
+        if (mqtt.connected()) publishStatus(false);
+      }
+    }
+    return;
+  }
+  same = false;
+  if (!pending) { pending = true; changeSince = now; }
+  if (now - changeSince < FLOW_DEBOUNCE_MS) return;
+  pending = false;
+  flowOk = ok;
+  flowKnown = true;
+  Serial.printf("[%lu s] %s (AUX %.2f V)%s\n", (unsigned long)(now / 1000), ok ? "Flow OK" : "No flow", a,
+                !ok ? ": unit held idle" : "");
+  updateFrame();
+  if (mqtt.connected()) publishStatus(false);
 }
 
 // Called after a command from HA. Rooms are saved separately, only when they change, since HA
@@ -508,7 +585,7 @@ void publishDiscovery() {
   undiscover("binary_sensor", "actual_power");   // replaced by Operation
   discover("sensor", "operation", "Operation",
            "\"stat_t\":\"" + topic("operation") + "\",\"dev_cla\":\"enum\","
-           "\"options\":[\"Off\",\"Heating\",\"Cooling\",\"Fan\"],\"icon\":\"mdi:hvac\"");
+           "\"options\":[\"Off\",\"Heating\",\"Cooling\",\"Fan\",\"No flow\"],\"icon\":\"mdi:hvac\"");
   discover("sensor", "auto_direction", "Auto direction",
            "\"stat_t\":\"" + topic("auto_direction") + "\",\"icon\":\"mdi:swap-vertical\"");
   discover("sensor", "thermostat_temperature", "Thermostat temperature",
@@ -527,6 +604,9 @@ void publishDiscovery() {
            "\"options\":" + options(FAN_NAMES, 3) + ",\"icon\":\"mdi:fan\"");
   discover("binary_sensor", "compressor", "Compressor",
            "\"stat_t\":\"" + topic("compressor") + "\",\"dev_cla\":\"running\"");
+  // binary_sensor.aircon_no_flow: the Kindle controller reads this id.
+  discover("binary_sensor", "no_flow", "No flow",
+           "\"stat_t\":\"" + topic("no_flow") + "\",\"dev_cla\":\"problem\"");
   discoverVoltage("aux", "AUX voltage");
   discoverVoltage("aux_min", "AUX minimum");
   discoverVoltage("aux_max", "AUX maximum");
@@ -651,9 +731,15 @@ void publishStatus(bool force) {
     lastComp = compRunning;
     publish("compressor", compRunning ? "ON" : "OFF");
   }
+  static int lastFlow = -1;
+  if (flowKnown && (force || (int)flowOk != lastFlow)) {   // nothing until the boot check ends
+    lastFlow = flowOk;
+    publish("no_flow", flowOk ? "OFF" : "ON");
+  }
   static const char* lastOperation = nullptr;
   uint8_t bits = frameBits;
-  const char* operation = !bits ? "Off"
+  const char* operation = noFlowHold ? "No flow"           // the interlock holds the whole unit idle
+                        : !bits ? "Off"
                         : !(bits & COMP_BITS) ? "Fan"          // fan only, or the compressor locked out
                         : (bits & HEAT_BIT) ? "Heating" : "Cooling";
   if (force || operation != lastOperation) { lastOperation = operation; publish("operation", operation); }
@@ -886,6 +972,7 @@ void startLoopWatchdog() {
 
 // ---------- setup / loop ----------
 void setup() {
+  Serial.begin(115200);
   esp_reset_reason_t rr = esp_reset_reason();
   if (rtcMagic != RTC_MAGIC) {         // power-on: RTC memory holds garbage
     rtcMagic = RTC_MAGIC;
@@ -964,6 +1051,7 @@ void loop() {
 #if BOARD_PCB
   updateTablet();
 #endif
+  updateFlow();
 
   uint32_t now = millis();
   if (now - lastCtl >= 1000) {         // ends lockouts; reports compressor and lockout changes
