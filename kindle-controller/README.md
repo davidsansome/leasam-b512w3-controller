@@ -33,8 +33,8 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
   - The battery is read on the minute wake-up, and the charger is checked then too (see below).
 - **Charging from the tablet board:** the board's USB port is current-limited to about 123 mA. The Kindle's charger (ROHM BD71827) runs an adaptive input limit that trips on that limit and suspends charging until it's replugged, while powerd still reports "charging". If the charger is suspended with USB power present on two minute checks in a row (and the battery isn't full), the controller sets a fixed 100 mA input limit and resets the charger, through the driver's `registers` sysfs file. It then charges at about +50 mA. A normal charger never leaves the charger suspended, so it isn't affected. The Kindle's driver sets its own limit on every plug-in, and the chip resets on reboot, so the fix is applied again whenever it's needed. With the adaptive limit off, the chip back-feeds the Kindle's own USB port from the battery (about 3.8 V) once the cable is unplugged, so the unplug isn't detected and it keeps showing "charging". So while the fix is in place, a VBUS reading below 4.3 V turns the adaptive limit back on, and the unplug is then seen within a minute. See `src/charge_guard.rs`.
   - Signals wake the loop through a pipe, so stopping is immediate.
-- **Starting up:** shows the waking house with "Starting up", and "Waiting for Wi-Fi" until the Kindle reports a connection, then "Connecting to Home Assistant". Failed attempts meanwhile aren't shown: at boot, Wi-Fi takes about 20 s to connect. If HA still isn't connected after a minute, the "Can't reach Home Assistant" screen takes over.
-- **Disconnected:** once connected, losing HA shows a full-screen "Can't reach Home Assistant" screen with the reason and a retry countdown (in 5 s steps), and retries with backoff (1 s up to 60 s). HA is pinged every 30 s, so a dead Wi-Fi link is noticed within about 50 s.
+- **Starting up:** shows a waking house (eyes open, stretching, with Wi-Fi arcs over the roof) with "Starting up", and "Waiting for Wi-Fi" until the Kindle reports a connection, then "Connecting to Home Assistant". Failed attempts meanwhile aren't shown: at boot, Wi-Fi takes about 20 s to connect. If HA still isn't connected after a minute, the "Can't reach Home Assistant" screen takes over.
+- **Disconnected:** once connected, losing HA shows a full-screen "Can't reach Home Assistant" screen with the reason and a retry countdown (in 5 s steps), and retries with backoff (1 s up to 60 s). As soon as the Kindle announces the network is up (`com.lab126.cmd connectionAvailable`, heard through `lipc-wait-event`), it skips the rest of the backoff and reconnects. HA is pinged every 30 s, so a dead Wi-Fi link is noticed within about 50 s.
 - **Device in HA:** registers through the built-in `mobile_app` integration and appears under *Settings → Devices → Mobile App*. It has three diagnostic sensors, pushed every 5 minutes:
   - battery level (%)
   - uptime (s)
@@ -42,7 +42,6 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 - **Orientation:** landscape by default (`display.rotation = 90`; use 270 if the Kindle is mounted the other way up).
 - **Menu:** the **⋮** button in the top-right corner, on every screen including the error screen, opens a dropdown with:
   - **Turn backlight on/off**, through powerd's `flIntensity`. It restores the previous level when turned back on.
-  - **Sleep**, which shows a full-screen sleepy house (closed eyes, a smile and some Zs), closes the HA connection, and turns Wi-Fi (`com.lab126.cmd wirelessEnable`) and the touchscreen (`com.lab126.deviced enable_touch`) off, along with the backlight. Touches are ignored while asleep even if the touchscreen can't be turned off. Pressing the **power button** turns both back on and shows a **Waking up** screen (the house with its eyes open, stretching, with Wi-Fi arcs over the roof) until HA is connected, saying whether it's still waiting for Wi-Fi or connecting to HA. Wi-Fi takes about 11 s to come back. Meanwhile HA is retried every second (for up to a minute) rather than backing off, and as soon as the Kindle announces the network is up (`com.lab126.cmd connectionAvailable`, heard through `lipc-wait-event`), it reconnects immediately. If HA still isn't back after a minute, the usual "Can't reach Home Assistant" screen takes over. The same network event also cuts short the backoff after an ordinary Wi-Fi dropout. The backlight comes back on when waking if it was on before. The Kindle itself stays awake (light sleep): the stock firmware doesn't deep-sleep on USB power either.
   - **Exit controller**, which hands the screen back to the Kindle UI.
   - **Reboot**, which needs a second tap to confirm. The Kindle UI isn't started first. The controller comes back after the reboot if it's set to start at boot (see Installing).
 
@@ -52,7 +51,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
   - **Exiting:** takes about a minute while the Kindle UI starts back up. The controller shows "Returning to the Kindle home screen" meanwhile.
   - **Coexist mode:** `"coexist"` leaves the UI running but paused, which exits faster but uses more CPU.
   - **Touch:** touches are grabbed so the Kindle UI never sees them.
-  - **Never sleeps:** going to sleep would turn the touchscreen off, so the controller prevents it. powerd's `preventScreenSaver` stops the inactivity timeout, the power button is grabbed (`framework.block_power_button`; the controller still sees presses, to wake from **Sleep**), and if the Kindle is already asleep when the controller starts, it's woken up.
+  - **Never sleeps:** going to sleep would turn the touchscreen off, so the controller prevents it. powerd's `preventScreenSaver` stops the inactivity timeout, the power button is grabbed (`framework.block_power_button`), and if the Kindle is already asleep when the controller starts, it's woken up.
   - **Restoring:** everything is put back on a clean exit (the menu's Exit, or `stop.sh`). If X isn't running because the controller started at boot, it's started, and the Kindle UI follows. While the controller runs, KUAL is unavailable, so the menu (or SSH) is the way out.
   - **Crashes:** after a crash, `supervise.sh` starts the controller again 10 seconds later. The Kindle UI isn't brought back in between. A panic on any thread counts as a crash.
 
@@ -64,7 +63,7 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
 | `src/display/` | framebuffer (mmap), e-ink refresh via libfbink (linked in; see `build.rs` and `csrc/`), canvas with anti-aliased vector shapes (tiny-skia), fonts, icons |
 | `src/input.rs` | touchscreen (evdev) thread |
 | `src/framework.rs` | pausing/stopping the Kindle UI and restoring it |
-| `src/sleep.rs` | Sleep: Wi-Fi and touch on/off, and listening for the network coming back |
+| `src/network.rs` | whether Wi-Fi is connected, and listening for the network coming (back) up |
 | `src/ha/` | WebSocket client, entity state tracking, mobile_app registration |
 | `src/diagnostics.rs` | battery / uptime / Wi-Fi readings |
 | `src/charge_guard.rs` | keeps the Kindle charging from the tablet board's current-limited USB port |

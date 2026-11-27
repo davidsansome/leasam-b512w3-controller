@@ -21,7 +21,7 @@ mod ha;
 mod input;
 mod lipc;
 mod logger;
-mod sleep;
+mod network;
 mod ui;
 
 use std::path::{Path, PathBuf};
@@ -51,8 +51,6 @@ enum Mode {
 enum AppEvent {
     Touch(input::TouchEvent),
     Ha(ha::HaEvent),
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // only produced on the device
-    PowerButton,
     /// The Kindle has a working network connection again.
     NetworkUp,
     /// SIGTERM / SIGINT / SIGHUP, or a panic on another thread.
@@ -149,18 +147,15 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
     let state_path = config_path.with_file_name("state.json");
     let mut display = display::Display::open(&config.display)?;
     // Held for the whole run: dropping them releases the grabs.
-    let power_buttons = input::open_power_buttons(config.framework.block_power_button);
+    let _power_buttons =
+        if config.framework.block_power_button { input::grab_power_buttons() } else { Vec::new() };
     let size = display.size();
     let fonts = Fonts::load(config.display.font.as_deref());
 
     let (tx, rx) = mpsc::channel();
     forward_signals(signals, tx.clone());
-    let power_tx = tx.clone();
-    input::watch_power_buttons(&power_buttons, move || {
-        let _ = power_tx.send(AppEvent::PowerButton);
-    });
     let network_tx = tx.clone();
-    let _network = sleep::NetworkWatcher::spawn(move || {
+    let _network = network::NetworkWatcher::spawn(move || {
         let _ = network_tx.send(AppEvent::NetworkUp);
     });
     let touch_tx = tx.clone();
@@ -184,7 +179,7 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
     }
     let mut app = App::new(config.dashboard.clone(), config.aircon.clone(), fonts, size);
     // Checked after the network watcher has started, so a connection can't slip between.
-    if sleep::wifi_connected() {
+    if network::wifi_connected() {
         app.set_network_up();
     }
     let ha = ha::spawn(
@@ -207,8 +202,6 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
     app.set_backlight_state(backlight.is_on());
     let (percent, charging) = diagnostics::battery_status();
     app.set_battery(percent, charging);
-    // Whether the backlight was on when going to sleep, to turn it back on when waking.
-    let mut backlight_before_sleep = false;
     let mut outcome = Outcome::Exit;
     let mut last_battery = Instant::now();
     let mut charge_guard = charge_guard::ChargeGuard::default();
@@ -245,23 +238,6 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
                     backlight.set(on);
                     app.set_backlight_state(backlight.is_on());
                 }
-                Some(UiAction::Sleep) => {
-                    info!("going to sleep");
-                    app.set_asleep(true);
-                    if let Err(e) = app.present(&mut display) {
-                        error!("display update failed: {e:#}");
-                    }
-                    // Close the HA connection cleanly before the network goes.
-                    ha.set_paused(true);
-                    sleep::set_touch(false);
-                    sleep::set_wifi(false);
-                    // Turned back on when waking, if it was on now.
-                    backlight_before_sleep = backlight.is_on() != Some(false);
-                    if backlight_before_sleep {
-                        backlight.set(false);
-                        app.set_backlight_state(backlight.is_on());
-                    }
-                }
                 Some(UiAction::Exit) => {
                     info!("exit requested from the menu");
                     let detail = match config.framework.mode {
@@ -285,19 +261,6 @@ fn run_ui(config_path: &Path, config: Config, signals: Option<std::fs::File>) ->
                 None => {}
             },
             Ok(AppEvent::Ha(e)) => app.on_ha_event(e),
-            // Awake, the button does nothing: it's grabbed so powerd can't sleep the Kindle.
-            Ok(AppEvent::PowerButton) if app.is_asleep() => {
-                info!("waking up");
-                sleep::set_wifi(true);
-                sleep::set_touch(true);
-                ha.set_paused(false);
-                if backlight_before_sleep {
-                    backlight.set(true);
-                    app.set_backlight_state(backlight.is_on());
-                }
-                app.wake();
-            }
-            Ok(AppEvent::PowerButton) => {}
             // Also helps after an ordinary Wi-Fi dropout: no waiting out the backoff.
             Ok(AppEvent::NetworkUp) => {
                 app.set_network_up();

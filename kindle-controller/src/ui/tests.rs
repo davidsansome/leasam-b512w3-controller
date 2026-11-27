@@ -315,21 +315,6 @@ fn missing_or_unavailable_no_flow_entity_is_no_error() {
 }
 
 #[test]
-fn no_flow_while_asleep_doesnt_flash_the_sleep_screen() {
-    let mut app = app();
-    app.set_asleep(true);
-    app.pending_update = None;
-    app.on_ha_event(HaEvent::Entities(states(json!({NO_FLOW: {"s": "on"}}))));
-    assert_ne!(app.pending_update, Some(Update::Full));
-    // Waking redraws everything, panel included.
-    app.wake();
-    app.on_ha_event(HaEvent::Connected);
-    assert_eq!(app.pending_update, Some(Update::Full));
-    app.render();
-    assert_eq!(app.canvas.pixel(IN_HEADING.0, IN_HEADING.1), BLACK);
-}
-
-#[test]
 fn lockout_counts_down_from_the_sensor_value() {
     let mut app = app();
     assert_eq!(app.lockout_shown(), None);
@@ -390,57 +375,18 @@ fn menu_still_works() {
     let mut app = app();
     assert_eq!(tap(&mut app, centre(MENU_BUTTON)), None);
     assert!(app.menu.is_some());
-    let exit = App::menu_item_rect(2);
+    let exit = App::menu_item_rect(1);
     assert_eq!(tap(&mut app, centre(exit)), Some(UiAction::Exit));
 }
 
 #[test]
-fn sleep_ignores_touches_until_woken() {
-    let mut app = app();
-    let power = hit_for(&app, "switch.aircon_power", "off");
-    tap(&mut app, centre(MENU_BUTTON));
-    assert_eq!(tap(&mut app, centre(App::menu_item_rect(1))), Some(UiAction::Sleep));
-    app.set_asleep(true);
-    assert_eq!(app.pending_update, Some(Update::Full));
-    app.render_sleep();
-    app.pending_update = None;
-    assert_eq!(tap(&mut app, centre(power)), None);
-    assert_eq!(tap(&mut app, centre(MENU_BUTTON)), None);
-    assert!(app.menu.is_none());
-    // HA updates while asleep don't ask for a redraw that would change anything.
-    app.tick();
-    assert!(app.next_wakeup() >= Duration::from_secs(600));
-    app.wake();
-    assert_eq!(app.pending_update, Some(Update::Full));
-    app.on_ha_event(HaEvent::Connected);
-    app.render();
-    assert!(tap(&mut app, centre(power)).is_some());
-}
-
-#[test]
-fn waking_screen_hides_reconnect_failures_until_connected() {
-    let mut app = app();
-    app.set_asleep(true);
-    app.wake();
-    assert!(matches!(app.screen, Screen::Waking { wifi_up: false, .. }));
-    app.on_ha_event(HaEvent::Disconnected { reason: "unreachable".into(), attempt: 1, retry_in: Duration::from_secs(1) });
-    assert!(matches!(app.screen, Screen::Waking { failure: Some(_), .. }));
-    app.set_network_up();
-    assert!(matches!(app.screen, Screen::Waking { wifi_up: true, .. }));
-    app.render();
-    assert!(app.hits.is_empty(), "no dashboard controls while waking");
-    app.on_ha_event(HaEvent::Connected);
-    assert!(matches!(app.screen, Screen::Dashboard));
-}
-
-#[test]
-fn startup_shows_the_waking_screen_until_connected() {
+fn startup_screen_hides_reconnect_failures_until_connected() {
     let mut app = App::new(dash(), aircon(), Fonts::bitmap(), (W, H));
-    assert!(matches!(app.screen, Screen::Waking { kind: Waking::Startup, wifi_up: false, .. }));
+    assert!(matches!(app.screen, Screen::Starting { wifi_up: false, .. }));
     app.on_ha_event(HaEvent::Disconnected { reason: "Network unreachable".into(), attempt: 3, retry_in: Duration::from_secs(8) });
-    assert!(matches!(app.screen, Screen::Waking { kind: Waking::Startup, failure: Some(_), .. }));
+    assert!(matches!(app.screen, Screen::Starting { failure: Some(_), .. }));
     app.set_network_up();
-    assert!(matches!(app.screen, Screen::Waking { wifi_up: true, .. }));
+    assert!(matches!(app.screen, Screen::Starting { wifi_up: true, .. }));
     app.render();
     assert!(app.hits.is_empty(), "no dashboard controls while starting");
     app.on_ha_event(HaEvent::Connected);
@@ -453,21 +399,20 @@ fn startup_shows_the_waking_screen_until_connected() {
 #[test]
 fn startup_gives_up_on_wifi_after_a_while() {
     let mut app = App::new(dash(), aircon(), Fonts::bitmap(), (W, H));
-    if let Screen::Waking { since, .. } = &mut app.screen {
-        *since = Instant::now() - WAKING_TIMEOUT;
+    if let Screen::Starting { since, .. } = &mut app.screen {
+        *since = Instant::now() - STARTUP_TIMEOUT;
     }
     app.tick();
     assert!(matches!(&app.screen, Screen::Disconnected { reason, .. } if reason == "Still waiting for Wi-Fi"));
 }
 
 #[test]
-fn waking_screen_gives_up_after_a_while() {
-    let mut app = app();
-    app.wake();
+fn startup_shows_the_last_failure_when_it_gives_up() {
+    let mut app = App::new(dash(), aircon(), Fonts::bitmap(), (W, H));
     app.on_ha_event(HaEvent::Disconnected { reason: "unreachable".into(), attempt: 7, retry_in: Duration::from_secs(1) });
-    assert!(app.next_wakeup() <= WAKING_TIMEOUT + Duration::from_secs(1));
-    if let Screen::Waking { since, .. } = &mut app.screen {
-        *since = Instant::now() - WAKING_TIMEOUT;
+    assert!(app.next_wakeup() <= STARTUP_TIMEOUT + Duration::from_secs(1));
+    if let Screen::Starting { since, .. } = &mut app.screen {
+        *since = Instant::now() - STARTUP_TIMEOUT;
     }
     app.tick();
     assert!(matches!(&app.screen, Screen::Disconnected { reason, attempt: 7, .. } if reason == "unreachable"));
@@ -544,7 +489,7 @@ fn preview() {
         app.on_ha_event(HaEvent::Forecast(forecast.clone()));
         app.on_ha_event(HaEvent::History(history.clone()));
         // Connected first either way: losing the connection is what shows the error screen
-        // (failures while starting up stay on the waking screen).
+        // (failures while starting up stay on the "Starting up" screen).
         app.on_ha_event(HaEvent::Connected);
         if !connected {
             app.on_ha_event(HaEvent::Disconnected {
@@ -553,14 +498,8 @@ fn preview() {
                 retry_in: Duration::from_secs(16),
             });
         }
-        if name == "sleep" {
-            app.render_sleep();
-        } else if name == "waking" {
-            app.wake();
-            app.set_network_up();
-            app.render();
-        } else if name == "starting" {
-            app.screen = Screen::Waking { kind: Waking::Startup, since: Instant::now(), wifi_up: false, failure: None };
+        if name == "starting" {
+            app.screen = Screen::Starting { since: Instant::now(), wifi_up: false, failure: None };
             app.render();
         } else {
             app.render();
@@ -587,8 +526,6 @@ fn preview() {
     shot("no_rooms", json!({"sensor.aircon_rooms": {"s": "0", "a": {"rooms": []}}}), true);
     shot("unavailable", json!({"switch.aircon_power": {"s": "unavailable", "lc": now - 34.0 * 60.0}}), true);
     shot("disconnected", json!({}), false);
-    shot("sleep", json!({}), true);
-    shot("waking", json!({}), true);
     shot("starting", json!({}), true);
 }
 

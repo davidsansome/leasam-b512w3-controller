@@ -47,17 +47,11 @@ impl Mapping {
     }
 }
 
-/// Opens every input device with a power key. With `grab`, takes exclusive grabs on them,
-/// so powerd never sees presses and can't send the Kindle into screensaver mode (which
-/// turns touch off). The grabs last as long as the returned files are kept open.
-pub fn open_power_buttons(grab: bool) -> Vec<std::fs::File> {
-    imp::open_power_buttons(grab)
-}
-
-/// Calls `on_press` (from a background thread) each time the power button is pressed on
-/// any of `devices`.
-pub fn watch_power_buttons(devices: &[std::fs::File], on_press: impl Fn() + Send + Clone + 'static) {
-    imp::watch_power_buttons(devices, on_press)
+/// Takes exclusive grabs on every input device with a power key, so powerd never sees
+/// presses and can't send the Kindle into screensaver mode (which turns touch off). The
+/// grabs last as long as the returned files are kept open.
+pub fn grab_power_buttons() -> Vec<std::fs::File> {
+    imp::grab_power_buttons()
 }
 
 /// Starts the input thread. `on_event` is called from that thread.
@@ -154,7 +148,7 @@ mod imp {
         ioctl(file, ioc(IOC_WRITE, 0x90, size_of::<libc::c_int>()), &mut on)
     }
 
-    pub fn open_power_buttons(want_grab: bool) -> Vec<File> {
+    pub fn grab_power_buttons() -> Vec<File> {
         let Ok(dir) = std::fs::read_dir("/dev/input") else { return Vec::new() };
         let mut grabbed = Vec::new();
         for path in dir.flatten().map(|e| e.path()) {
@@ -163,11 +157,6 @@ mod imp {
             }
             let Ok(file) = File::open(&path) else { continue };
             if !has_key(&file, KEY_POWER) || has_abs(&file, ABS_MT_POSITION_X) {
-                continue;
-            }
-            if !want_grab {
-                info!("watching the power button on {} ({})", path.display(), device_name(&file));
-                grabbed.push(file);
                 continue;
             }
             match grab(&file) {
@@ -179,37 +168,6 @@ mod imp {
             }
         }
         grabbed
-    }
-
-    pub fn watch_power_buttons(devices: &[File], on_press: impl Fn() + Send + Clone + 'static) {
-        for device in devices {
-            let Ok(mut file) = device.try_clone() else { continue };
-            let on_press = on_press.clone();
-            let spawned = std::thread::Builder::new().name("power-button".into()).spawn(move || {
-                let mut buf = [0u8; size_of::<InputEvent>() * 16];
-                loop {
-                    let n = match file.read(&mut buf) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            warn!("power button stopped: {e}");
-                            return;
-                        }
-                    };
-                    for chunk in buf[..n].chunks_exact(size_of::<InputEvent>()) {
-                        // SAFETY: InputEvent is plain old data; read_unaligned copes with alignment.
-                        let ev: InputEvent = unsafe { std::ptr::read_unaligned(chunk.as_ptr().cast()) };
-                        // value 1 is the press; 0 is the release and 2 auto-repeat.
-                        if ev.type_ == EV_KEY && ev.code == KEY_POWER && ev.value == 1 {
-                            debug!("power button pressed");
-                            on_press();
-                        }
-                    }
-                }
-            });
-            if let Err(e) = spawned {
-                warn!("couldn't start the power button thread: {e}");
-            }
-        }
     }
 
     fn abs_range(file: &File, code: u16) -> Result<(i32, i32)> {
@@ -332,11 +290,9 @@ mod imp {
         bail!("touch input is only available on Linux")
     }
 
-    pub fn open_power_buttons(_: bool) -> Vec<std::fs::File> {
+    pub fn grab_power_buttons() -> Vec<std::fs::File> {
         Vec::new()
     }
-
-    pub fn watch_power_buttons(_: &[std::fs::File], _: impl Fn() + Send + Clone + 'static) {}
 }
 
 #[cfg(test)]

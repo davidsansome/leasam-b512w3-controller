@@ -1,14 +1,13 @@
 //! Screens and touch handling.
 //!
-//! `App` decides what's on screen: a waking screen while Wi-Fi and HA connect, a
+//! `App` decides what's on screen: a "Starting up" screen while Wi-Fi and HA connect, a
 //! full-screen error while HA is unreachable, or the dashboard (weather, rooms and the
 //! aircon panel). A ⋮ button in the top-right corner opens a dropdown menu for the
-//! backlight, sleep, exiting and rebooting. While asleep, only the sleep screen is shown and
-//! touches are ignored.
+//! backlight, exiting and rebooting.
 //!
-//! On starting ("Starting up") and after waking ("Waking up"), the waking screen stays up
-//! until HA is connected (or `WAKING_TIMEOUT` passes), instead of the connection error that
-//! the first attempts would otherwise show while Wi-Fi connects.
+//! On starting, the "Starting up" screen stays up until HA is connected (or
+//! `STARTUP_TIMEOUT` passes), instead of the connection error that the first attempts would
+//! otherwise show while Wi-Fi connects.
 //!
 //! Taps change what's shown straight away ("optimistic" state) and send a service call; the
 //! optimistic state is dropped once HA reports the real one, or after a timeout.
@@ -40,7 +39,6 @@ use draw::{DARK_GRAY, centred_baseline};
 pub enum UiAction {
     Call(ServiceCall),
     SetBacklight(bool),
-    Sleep,
     Exit,
     Reboot,
 }
@@ -59,62 +57,28 @@ const NOTICE_H: i32 = 90;
 const PENDING_TIMEOUT: Duration = Duration::from_secs(8);
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(10);
 const MENU_TIMEOUT: Duration = Duration::from_secs(30);
-/// On starting or after waking, how long to show the waking screen before admitting HA
-/// can't be reached. Wi-Fi alone takes about 11 s to come back after Sleep on the PW4, and
-/// about 20 s to connect at boot.
-const WAKING_TIMEOUT: Duration = Duration::from_secs(60);
+/// On starting, how long to show the "Starting up" screen before admitting HA can't be
+/// reached. Wi-Fi takes about 20 s to connect at boot on the PW4.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 /// How much room-temperature history the sparklines show.
 pub const HISTORY_WINDOW: Duration = Duration::from_secs(3600);
 
 enum Screen {
     Disconnected { reason: String, attempt: u32, retry_at: Instant },
-    /// Just started, or just woken from sleep: waiting for Wi-Fi, then HA. Connection
-    /// failures meanwhile are kept in `failure`, to show if it gives up.
-    Waking { kind: Waking, since: Instant, wifi_up: bool, failure: Option<(String, u32, Instant)> },
+    /// Just started: waiting for Wi-Fi, then HA. Connection failures meanwhile are kept in
+    /// `failure`, to show if it gives up.
+    Starting { since: Instant, wifi_up: bool, failure: Option<(String, u32, Instant)> },
     Dashboard,
-}
-
-/// Why we're waiting for Wi-Fi and HA: it changes the wording on the waking screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Waking {
-    /// The controller has just started, e.g. at boot, when Wi-Fi is still connecting.
-    Startup,
-    /// Woken from Sleep, which turned Wi-Fi off.
-    FromSleep,
-}
-
-impl Waking {
-    fn title(self) -> &'static str {
-        match self {
-            Waking::Startup => "Starting up",
-            Waking::FromSleep => "Waking up",
-        }
-    }
-
-    fn waiting_for_wifi(self) -> &'static str {
-        match self {
-            Waking::Startup => "Waiting for Wi-Fi",
-            Waking::FromSleep => "Turning Wi-Fi on",
-        }
-    }
-
-    fn gave_up(self) -> &'static str {
-        match self {
-            Waking::Startup => "Still waiting for Wi-Fi",
-            Waking::FromSleep => "Still waiting for Wi-Fi after waking up",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuItem {
     Backlight,
-    Sleep,
     Exit,
     Reboot,
 }
 
-const MENU_ITEMS: [MenuItem; 4] = [MenuItem::Backlight, MenuItem::Sleep, MenuItem::Exit, MenuItem::Reboot];
+const MENU_ITEMS: [MenuItem; 3] = [MenuItem::Backlight, MenuItem::Exit, MenuItem::Reboot];
 
 struct Menu {
     opened: Instant,
@@ -168,8 +132,6 @@ pub struct App {
     /// produce identical pixels and the e-ink isn't refreshed for nothing.
     frame_now: f64,
     pending_update: Option<Update>,
-    /// Showing the sleep screen; see `set_asleep`.
-    asleep: bool,
 }
 
 impl App {
@@ -179,7 +141,7 @@ impl App {
             aircon,
             fonts,
             canvas: Canvas::new(size.0, size.1),
-            screen: Screen::Waking { kind: Waking::Startup, since: Instant::now(), wifi_up: false, failure: None },
+            screen: Screen::Starting { since: Instant::now(), wifi_up: false, failure: None },
             entities: Arc::new(EntityMap::new()),
             forecast: Vec::new(),
             rooms: Vec::new(),
@@ -195,7 +157,6 @@ impl App {
             shown_countdown: String::new(),
             frame_now: 0.0,
             pending_update: Some(Update::Full),
-            asleep: false,
         }
     }
 
@@ -254,34 +215,10 @@ impl App {
         }
     }
 
-    /// Switches to or from the sleep screen. Both directions flash the whole screen. While
-    /// asleep, touches are ignored and nothing else is redrawn; HA updates are still taken
-    /// in, so the dashboard is current on waking.
-    pub fn set_asleep(&mut self, asleep: bool) {
-        if self.asleep != asleep {
-            self.asleep = asleep;
-            self.menu = None;
-            self.notice = None;
-            self.optimistic.clear();
-            self.pending_update = Some(Update::Full);
-        }
-    }
-
-    pub fn is_asleep(&self) -> bool {
-        self.asleep
-    }
-
-    /// Leaves sleep for the "Waking up" screen, which gives way to the dashboard once HA
-    /// connects.
-    pub fn wake(&mut self) {
-        self.set_asleep(false);
-        self.screen = Screen::Waking { kind: Waking::FromSleep, since: Instant::now(), wifi_up: false, failure: None };
-    }
-
     /// The Kindle reports a working network connection (again), or Wi-Fi was already
     /// connected when we started.
     pub fn set_network_up(&mut self) {
-        if let Screen::Waking { wifi_up, .. } = &mut self.screen
+        if let Screen::Starting { wifi_up, .. } = &mut self.screen
             && !*wifi_up
         {
             *wifi_up = true;
@@ -311,9 +248,9 @@ impl App {
                 self.screen = Screen::Dashboard;
                 self.invalidate(Update::Full);
             }
-            HaEvent::Disconnected { reason, attempt, retry_in } if matches!(self.screen, Screen::Waking { .. }) => {
-                // Expected while Wi-Fi connects: keep showing the waking screen for now.
-                if let Screen::Waking { failure, .. } = &mut self.screen {
+            HaEvent::Disconnected { reason, attempt, retry_in } if matches!(self.screen, Screen::Starting { .. }) => {
+                // Expected while Wi-Fi connects: keep showing the "Starting up" screen for now.
+                if let Screen::Starting { failure, .. } = &mut self.screen {
                     *failure = Some((reason, attempt, Instant::now() + retry_in));
                 }
                 self.optimistic.clear();
@@ -407,9 +344,7 @@ impl App {
         let now = self.no_flow();
         if now != before {
             info!("{}", if now { "aircon reports no water flow" } else { "aircon water flow is back" });
-            // Asleep, a full update would flash the sleep screen again for nothing; waking
-            // redraws everything anyway.
-            if matches!(self.screen, Screen::Dashboard) && !self.asleep {
+            if matches!(self.screen, Screen::Dashboard) {
                 self.invalidate(Update::Full);
             }
         }
@@ -445,7 +380,6 @@ impl App {
                 Some(true) => "Turn backlight off",
                 _ => "Turn backlight on",
             },
-            MenuItem::Sleep => "Sleep",
             MenuItem::Exit => "Exit controller",
             MenuItem::Reboot if reboot_armed => "Tap again to reboot",
             MenuItem::Reboot => "Reboot",
@@ -454,9 +388,6 @@ impl App {
 
     pub fn on_touch(&mut self, event: TouchEvent) -> Option<UiAction> {
         let TouchEvent::Down { x, y } = event else { return None };
-        if self.asleep {
-            return None;
-        }
 
         if let Some(menu) = &self.menu {
             // Any tap while the menu is open goes to the menu: a tap outside just closes it.
@@ -470,7 +401,6 @@ impl App {
             self.menu = None;
             return match item? {
                 MenuItem::Backlight => Some(UiAction::SetBacklight(self.backlight_on != Some(true))),
-                MenuItem::Sleep => Some(UiAction::Sleep),
                 MenuItem::Exit => Some(UiAction::Exit),
                 MenuItem::Reboot => Some(UiAction::Reboot),
             };
@@ -500,15 +430,12 @@ impl App {
 
     /// Checks timeouts and time-dependent text. Call it whenever the main loop wakes.
     pub fn tick(&mut self) {
-        if self.asleep {
-            return;
-        }
-        if let Screen::Waking { kind, since, failure, .. } = &mut self.screen
-            && since.elapsed() >= WAKING_TIMEOUT
+        if let Screen::Starting { since, failure, .. } = &mut self.screen
+            && since.elapsed() >= STARTUP_TIMEOUT
         {
             // Give up on the friendly screen and show what's wrong.
             let (reason, attempt, retry_at) =
-                failure.take().unwrap_or_else(|| (kind.gave_up().into(), 0, Instant::now()));
+                failure.take().unwrap_or_else(|| ("Still waiting for Wi-Fi".into(), 0, Instant::now()));
             self.screen = Screen::Disconnected { reason, attempt, retry_at };
             self.invalidate(Update::Full);
         }
@@ -536,10 +463,6 @@ impl App {
     /// while locked out), the next 5 s step of the retry countdown (only while disconnected),
     /// and any pending timeouts.
     pub fn next_wakeup(&self) -> Duration {
-        if self.asleep {
-            // Nothing on the sleep screen changes; wake-up comes from the power button.
-            return Duration::from_secs(3600);
-        }
         let mut secs = 60.0 - clock::now().rem_euclid(60.0);
         let since = |at: Instant, after: Duration| after.saturating_sub(at.elapsed()).as_secs_f64();
         if let Some(left) = self.lockout_left().filter(|_| self.lockout_shown().is_some()) {
@@ -548,8 +471,8 @@ impl App {
         if let Screen::Disconnected { retry_at, .. } = &self.screen {
             secs = secs.min(until_step(retry_at.saturating_duration_since(Instant::now()).as_secs_f64(), 5.0));
         }
-        if let Screen::Waking { since: started, .. } = &self.screen {
-            secs = secs.min(since(*started, WAKING_TIMEOUT));
+        if let Screen::Starting { since: started, .. } = &self.screen {
+            secs = secs.min(since(*started, STARTUP_TIMEOUT));
         }
         for o in self.optimistic.values() {
             secs = secs.min(since(o.since, PENDING_TIMEOUT));
@@ -596,14 +519,6 @@ impl App {
     /// Draws and shows the screen if anything changed.
     pub fn present(&mut self, display: &mut Display) -> Result<()> {
         let Some(update) = self.pending_update.take() else { return Ok(()) };
-        if self.asleep {
-            // Redrawn only on entering sleep: anything else would just repeat it.
-            if update != Update::Full {
-                return Ok(());
-            }
-            self.render_sleep();
-            return display.present(&self.canvas, update);
-        }
         self.render();
         display.present(&self.canvas, update)
     }
@@ -626,10 +541,9 @@ impl App {
                 };
                 self.draw_message("Can't reach Home Assistant", Some(&reason), Some(&retry));
             }
-            Screen::Waking { kind, wifi_up, .. } => {
-                let kind = *kind;
-                let detail = if *wifi_up { "Connecting to Home Assistant" } else { kind.waiting_for_wifi() };
-                self.draw_house_screen(icons::draw_waking_house, kind.title(), detail);
+            Screen::Starting { wifi_up, .. } => {
+                let detail = if *wifi_up { "Connecting to Home Assistant" } else { "Waiting for Wi-Fi" };
+                self.draw_house_screen(icons::draw_waking_house, "Starting up", detail);
             }
             Screen::Dashboard => self.render_dashboard(),
         }
@@ -681,15 +595,7 @@ impl App {
         }
     }
 
-    /// The sleep screen: the sleeping house and how to wake up. No clock or battery, so it
-    /// never needs redrawing.
-    fn render_sleep(&mut self) {
-        self.canvas.fill(WHITE);
-        self.hits.clear();
-        self.draw_house_screen(icons::draw_sleeping_house, "Sleeping", "Press the power button to wake");
-    }
-
-    /// A big house icon with a title and one line under it: the sleep and waking screens.
+    /// A big house icon with a title and one line under it: the "Starting up" screen.
     fn draw_house_screen(&mut self, icon: fn(&mut Canvas, i32, i32, i32, u8), title: &str, detail: &str) {
         let cx = W / 2;
         let size = 300;

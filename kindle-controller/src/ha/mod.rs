@@ -36,9 +36,6 @@ use wake::{Sleeper, Waker};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PING_TIMEOUT: Duration = Duration::from_secs(20);
-/// After unpausing, retry every second (rather than backing off) for this long, since the
-/// network is expected back any moment.
-const EAGER_RETRY: Duration = Duration::from_secs(60);
 const MAX_BACKOFF_SECS: u64 = 60;
 /// Registry changes often come in bursts (adding a device creates all its entities).
 const REGISTRY_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -127,8 +124,6 @@ pub enum HaEvent {
 
 enum Command {
     CallService(ServiceCall),
-    /// Disconnect and stay disconnected (true), or reconnect straight away (false).
-    SetPaused(bool),
     /// The network has (re)appeared: if waiting to reconnect, try now.
     RetryNow,
 }
@@ -136,7 +131,6 @@ enum Command {
 /// Why a session ended without an error.
 enum SessionEnd {
     UiGone,
-    Paused,
 }
 
 pub struct HaHandle {
@@ -148,13 +142,6 @@ pub struct HaHandle {
 impl HaHandle {
     pub fn call_service(&self, call: ServiceCall) {
         let _ = self.tx.send(Command::CallService(call));
-        self.waker.wake();
-    }
-
-    /// Pausing closes the connection and keeps it closed, without reporting it as a
-    /// failure, e.g. before turning Wi-Fi off. Unpausing reconnects straight away.
-    pub fn set_paused(&self, paused: bool) {
-        let _ = self.tx.send(Command::SetPaused(paused));
         self.waker.wake();
     }
 
@@ -203,49 +190,20 @@ fn run_forever(
     on_event: &impl Fn(HaEvent),
 ) {
     let mut failures: u32 = 0;
-    let mut paused = false;
-    // Until when to retry every second instead of backing off.
-    let mut eager_until: Option<Instant> = None;
     loop {
-        while paused {
-            match rx.recv() {
-                Ok(Command::SetPaused(p)) => paused = p,
-                Ok(Command::CallService(call)) => {
-                    on_event(HaEvent::ServiceCallFailed { call, error: "not connected".into() })
-                }
-                Ok(Command::RetryNow) => {}
-                Err(_) => return,
-            }
-            if !paused {
-                info!("resuming the HA connection");
-                failures = 0;
-                eager_until = Some(Instant::now() + EAGER_RETRY);
-            }
-        }
         info!("connecting to {}", base.websocket_url());
         let mut connected = false;
         let result = connect(base, &opts.ha.token)
             .and_then(|ws| Session::new(opts, base, ws, rx, sleeper, on_event, &mut connected).run());
         let reason = match result {
             Ok(SessionEnd::UiGone) => return,
-            Ok(SessionEnd::Paused) => {
-                info!("HA connection paused");
-                paused = true;
-                continue;
-            }
             Err(e) => format!("{e:#}"),
         };
         if connected {
             failures = 0;
-            eager_until = None;
         }
         failures += 1;
-        let eager = eager_until.is_some_and(|t| Instant::now() < t);
-        let retry_in = if eager {
-            Duration::from_secs(1)
-        } else {
-            Duration::from_secs((1u64 << (failures - 1).min(6)).min(MAX_BACKOFF_SECS))
-        };
+        let retry_in = Duration::from_secs((1u64 << (failures - 1).min(6)).min(MAX_BACKOFF_SECS));
         warn!("not connected to HA: {reason}; retrying in {}s", retry_in.as_secs());
         on_event(HaEvent::Disconnected { reason, attempt: failures, retry_in });
 
@@ -258,15 +216,6 @@ fn run_forever(
             match rx.recv_timeout(left) {
                 Ok(Command::CallService(call)) => {
                     on_event(HaEvent::ServiceCallFailed { call, error: "not connected".into() })
-                }
-                Ok(Command::SetPaused(p)) => {
-                    // Either way, stop waiting: pause now, or retry now.
-                    paused = p;
-                    if !p {
-                        failures = 0;
-                        eager_until = Some(Instant::now() + EAGER_RETRY);
-                    }
-                    break;
                 }
                 Ok(Command::RetryNow) => {
                     info!("network is back; reconnecting now");
@@ -451,12 +400,7 @@ impl<'a, F: Fn(HaEvent)> Session<'a, F> {
             loop {
                 match self.rx.try_recv() {
                     Ok(Command::CallService(call)) => self.call_service(call)?,
-                    Ok(Command::SetPaused(true)) => {
-                        let _ = self.ws.close(None);
-                        let _ = self.ws.flush();
-                        return Ok(SessionEnd::Paused);
-                    }
-                    Ok(Command::SetPaused(false) | Command::RetryNow) => {}
+                    Ok(Command::RetryNow) => {}
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => return Ok(SessionEnd::UiGone),
                 }

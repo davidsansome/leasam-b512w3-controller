@@ -133,28 +133,9 @@ pub fn draw_house_slash(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u
     }
 }
 
-/// A sleepy house for the sleep screen: closed eyes for windows, a little smile, and two Zs
-/// off the roof. The drawing is on a 68×72 grid starting at (-2, -6).
-pub fn draw_sleeping_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u8) {
-    let scale = size as f32 / 72.0;
-    let fx = x as f32 + (size as f32 - 68.0 * scale) / 2.0 + 2.0 * scale;
-    let fy = y as f32 + 6.0 * scale;
-    for data in [
-        "M14 36 L32 21 L50 36M18 33 V55 H46 V33",
-        "M22.5 40 q3 3.2 6 0M35.5 40 q3 3.2 6 0",
-        "M29 48.5 q3 2.2 6 0",
-        "M45 8h4.4l-4.4 4.4h4.4",
-        "M52.5 1.5h5.6l-5.6 5.6h5.6",
-    ] {
-        if let Some(p) = parse_path(data, fx, fy, scale) {
-            canvas.stroke_path(&p, 2.6 * scale, color);
-        }
-    }
-}
-
-/// The same house waking up, for the waking screen: eyes open, a smile, little arms
-/// stretching out from the walls, and Wi-Fi arcs over the roof. Same grid as
-/// `draw_sleeping_house`, so the house doesn't move.
+/// A house waking up, for the "Starting up" screen: eyes open, a smile, little arms
+/// stretching out from the walls, and Wi-Fi arcs over the roof. The drawing is on a 68×72
+/// grid starting at (-2, -6).
 pub fn draw_waking_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u8) {
     let scale = size as f32 / 72.0;
     let fx = x as f32 + (size as f32 - 68.0 * scale) / 2.0 + 2.0 * scale;
@@ -180,7 +161,7 @@ pub fn draw_waking_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: 
 
 /// The same house at a loss, for the no-water-flow error: worried brows over drooping eyes,
 /// a frown, one arm hanging limp and the other hand on its roof, and a question mark over
-/// the roof. Same grid as `draw_sleeping_house`.
+/// the roof. Same grid as `draw_waking_house`.
 pub fn draw_sad_house(canvas: &mut Canvas, x: i32, y: i32, size: i32, color: u8) {
     let scale = size as f32 / 72.0;
     let fx = x as f32 + (size as f32 - 68.0 * scale) / 2.0 + 2.0 * scale;
@@ -264,9 +245,6 @@ mod tests {
         let mut c = Canvas::new(100, 100);
         draw_house_slash(&mut c, 0, 0, 100, BLACK, WHITE);
         draw_aircon_alert(&mut c, 0, 0, 100, BLACK, WHITE);
-        let mut c = Canvas::new(100, 100);
-        draw_sleeping_house(&mut c, 0, 0, 100, BLACK);
-        assert!(c.diff_bounds(&Canvas::new(100, 100)).is_some(), "sleeping house drew nothing");
         let mut c = Canvas::new(100, 100);
         draw_waking_house(&mut c, 0, 0, 100, BLACK);
         assert!(c.diff_bounds(&Canvas::new(100, 100)).is_some(), "waking house drew nothing");

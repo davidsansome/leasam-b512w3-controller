@@ -1,30 +1,8 @@
-//! Sleep mode: Wi-Fi and the touchscreen off, until the power button is pressed.
-//!
-//! The Kindle itself stays awake: powerd's screensaver would draw over us and needs the
-//! framework, and it never suspends on USB power anyway. Only the radio and touch panel are
-//! switched off. Both go through lipc so the Kindle's own services stay in charge of them.
+//! Wi-Fi status: whether it's connected now, and listening for it coming (back) up.
 
 use log::{info, warn};
 
 use crate::lipc;
-
-/// Turns Wi-Fi on or off through the Kindle's connection manager.
-pub fn set_wifi(on: bool) {
-    info!("Wi-Fi {}", if on { "on" } else { "off" });
-    if !lipc::set("com.lab126.cmd", "wirelessEnable", if on { "1" } else { "0" }) {
-        warn!("couldn't turn Wi-Fi {}", if on { "on" } else { "off" });
-    }
-}
-
-/// Turns the touch panel on or off through deviced. If that doesn't work (the property
-/// isn't there on every firmware), touches are still ignored while asleep, but the panel
-/// stays powered.
-pub fn set_touch(on: bool) {
-    info!("touchscreen {}", if on { "on" } else { "off" });
-    if !lipc::set("com.lab126.deviced", "enable_touch", if on { "1" } else { "0" }) {
-        warn!("couldn't turn the touchscreen {} through deviced; ignoring touches instead", if on { "on" } else { "off" });
-    }
-}
 
 /// Whether Wi-Fi is connected right now, according to wifid. Used at startup, since
 /// `NetworkWatcher` only hears about connections made after it starts.
