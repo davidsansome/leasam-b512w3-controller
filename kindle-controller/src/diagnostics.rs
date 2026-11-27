@@ -1,5 +1,5 @@
-//! Device health reported to HA: battery level and charging status, uptime and Wi-Fi signal
-//! strength.
+//! Device health reported to HA: battery level, charging status, current and temperature,
+//! uptime and Wi-Fi signal strength.
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Diagnostics {
@@ -7,6 +7,11 @@ pub struct Diagnostics {
     /// The battery's status as sysfs reports it: "Charging", "Discharging", "Full",
     /// "Not charging" or "Unknown".
     pub charging_status: Option<String>,
+    /// The fuel gauge's average battery current in mA: positive while charging, negative
+    /// while draining.
+    pub battery_current_ma: Option<i32>,
+    /// Battery temperature in °C.
+    pub battery_temp_c: Option<i32>,
     pub uptime_secs: Option<u64>,
     pub wifi_dbm: Option<i32>,
 }
@@ -15,6 +20,8 @@ pub fn collect() -> Diagnostics {
     Diagnostics {
         battery_percent: battery_percent(),
         charging_status: charging_status(),
+        battery_current_ma: battery_sysfs("current_avg").and_then(|v| parse_micro_to_milli(&v)),
+        battery_temp_c: battery_sysfs("temp").and_then(|v| v.parse().ok()),
         uptime_secs: std::fs::read_to_string("/proc/uptime").ok().and_then(|t| parse_uptime(&t)),
         wifi_dbm: std::fs::read_to_string("/proc/net/wireless").ok().and_then(|t| parse_wireless(&t)),
     }
@@ -57,6 +64,12 @@ fn battery_percent() -> Option<u8> {
     battery_sysfs("capacity")?.parse().ok()
 }
 
+/// A sysfs reading in micro-units (µA), rounded to milli-units (mA).
+fn parse_micro_to_milli(text: &str) -> Option<i32> {
+    let micro: i64 = text.parse().ok()?;
+    i32::try_from((micro as f64 / 1000.0).round() as i64).ok()
+}
+
 fn parse_uptime(text: &str) -> Option<u64> {
     let secs: f64 = text.split_whitespace().next()?.parse().ok()?;
     Some(secs as u64)
@@ -85,6 +98,13 @@ fn parse_wireless(text: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converts_microamps() {
+        assert_eq!(parse_micro_to_milli("56666"), Some(57));
+        assert_eq!(parse_micro_to_milli("-120400"), Some(-120));
+        assert_eq!(parse_micro_to_milli(""), None);
+    }
 
     #[test]
     fn parses_uptime() {

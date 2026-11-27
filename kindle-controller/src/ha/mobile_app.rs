@@ -116,7 +116,7 @@ struct Sensor {
     state_class: Option<&'static str>,
 }
 
-const SENSORS: [Sensor; 4] = [
+const SENSORS: [Sensor; 6] = [
     Sensor {
         unique_id: "battery_level",
         name: "Battery level",
@@ -132,6 +132,22 @@ const SENSORS: [Sensor; 4] = [
         unit: None,
         icon: "mdi:battery-charging",
         state_class: None,
+    },
+    Sensor {
+        unique_id: "battery_current",
+        name: "Battery current",
+        device_class: Some("current"),
+        unit: Some("mA"),
+        icon: "mdi:current-dc",
+        state_class: Some("measurement"),
+    },
+    Sensor {
+        unique_id: "battery_temperature",
+        name: "Battery temperature",
+        device_class: Some("temperature"),
+        unit: Some("°C"),
+        icon: "mdi:thermometer",
+        state_class: Some("measurement"),
     },
     Sensor {
         unique_id: "uptime",
@@ -155,6 +171,8 @@ fn sensor_state(d: &Diagnostics, unique_id: &str) -> Value {
     match unique_id {
         "battery_level" => json!(d.battery_percent),
         "charging_status" => json!(d.charging_status),
+        "battery_current" => json!(d.battery_current_ma),
+        "battery_temperature" => json!(d.battery_temp_c),
         "uptime" => json!(d.uptime_secs),
         "wifi_signal" => json!(d.wifi_dbm),
         _ => Value::Null,
@@ -307,11 +325,13 @@ mod tests {
         let d = Diagnostics {
             battery_percent: Some(80),
             charging_status: Some("Not charging".into()),
+            battery_current_ma: Some(-12),
+            battery_temp_c: Some(27),
             uptime_secs: Some(60),
             wifi_dbm: None,
         };
         let regs = register_sensor_payloads(&d);
-        assert_eq!(regs.len(), 4);
+        assert_eq!(regs.len(), 6);
         assert_eq!(regs[0]["data"]["state"], json!(80));
         assert_eq!(regs[0]["data"]["unit_of_measurement"], json!("%"));
         assert_eq!(regs[0]["data"]["entity_category"], json!("diagnostic"));
@@ -319,9 +339,13 @@ mod tests {
         assert_eq!(status["state"], json!("Not charging"));
         assert!(status.get("device_class").is_none());
         assert!(status.get("unit_of_measurement").is_none());
-        assert!(regs[2]["data"].get("state_class").is_none());
+        assert_eq!(regs[2]["data"]["state"], json!(-12));
+        assert_eq!(regs[2]["data"]["unit_of_measurement"], json!("mA"));
+        assert_eq!(regs[3]["data"]["device_class"], json!("temperature"));
+        assert!(regs[4]["data"].get("state_class").is_none());
         let upd = update_sensors_payload(&d);
         assert_eq!(upd["data"][1]["state"], json!("Not charging"));
-        assert_eq!(upd["data"][3]["state"], Value::Null);
+        assert_eq!(upd["data"][3]["state"], json!(27));
+        assert_eq!(upd["data"][5]["state"], Value::Null);
     }
 }

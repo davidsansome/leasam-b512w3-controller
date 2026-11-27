@@ -35,9 +35,11 @@ The screen follows mockup **B2** (two-column aircon panel) on the design canvas.
   - Signals wake the loop through a pipe, so stopping is immediate.
 - **Starting up:** shows a waking house (eyes open, stretching, with Wi-Fi arcs over the roof) with "Starting up", and "Waiting for Wi-Fi" until the Kindle reports a connection, then "Connecting to Home Assistant". Failed attempts meanwhile aren't shown: at boot, Wi-Fi takes about 20 s to connect. If HA still isn't connected after a minute, the "Can't reach Home Assistant" screen takes over.
 - **Disconnected:** once connected, losing HA shows a full-screen "Can't reach Home Assistant" screen with the reason and a retry countdown (in 5 s steps), and retries with backoff (1 s up to 60 s). As soon as the Kindle announces the network is up (`com.lab126.cmd connectionAvailable`, heard through `lipc-wait-event`), it skips the rest of the backoff and reconnects. HA is pinged every 30 s, so a dead Wi-Fi link is noticed within about 50 s.
-- **Device in HA:** registers through the built-in `mobile_app` integration and appears under *Settings → Devices → Mobile App*. It has four diagnostic sensors, pushed every 5 minutes:
+- **Device in HA:** registers through the built-in `mobile_app` integration and appears under *Settings → Devices → Mobile App*. It has six diagnostic sensors, pushed every 5 minutes:
   - battery level (%)
   - charging status: the battery's own status from sysfs (`Charging`, `Discharging`, `Full`, `Not charging` or `Unknown`), the same reading the on-screen bolt uses. It's checked once a minute and a change is sent straight away.
+  - battery current (mA): the fuel gauge's average (`current_avg`), positive while charging and negative while draining
+  - battery temperature (°C)
   - uptime (s)
   - Wi-Fi signal (dBm)
 - **Orientation:** landscape by default (`display.rotation = 90`; use 270 if the Kindle is mounted the other way up).
