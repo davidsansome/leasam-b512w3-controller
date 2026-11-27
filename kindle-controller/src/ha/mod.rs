@@ -35,6 +35,8 @@ use wake::{Sleeper, Waker};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// How often the battery's charging status is checked, so a change reaches HA quickly.
+const CHARGING_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const PING_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BACKOFF_SECS: u64 = 60;
 /// Registry changes often come in bursts (adding a device creates all its entities).
@@ -332,6 +334,9 @@ struct Session<'a, F: Fn(HaEvent)> {
     ping_sent: Option<Instant>,
     last_ping: Instant,
     last_diagnostics: Instant,
+    /// When the charging status was last checked, and what was last sent to HA.
+    last_charging_check: Instant,
+    last_charging_status: Option<String>,
     last_forecast: Option<Instant>,
 }
 
@@ -370,6 +375,8 @@ impl<'a, F: Fn(HaEvent)> Session<'a, F> {
             ping_sent: None,
             last_ping: Instant::now(),
             last_diagnostics: Instant::now(),
+            last_charging_check: Instant::now(),
+            last_charging_status: None,
             last_forecast: None,
         }
     }
@@ -426,6 +433,7 @@ impl<'a, F: Fn(HaEvent)> Session<'a, F> {
         };
         let interval = Duration::from_secs(self.opts.ha.diagnostics_interval_secs.max(10));
         at = at.min(self.last_diagnostics + interval);
+        at = at.min(self.last_charging_check + CHARGING_CHECK_INTERVAL);
         if let Some(f) = self.last_forecast {
             at = at.min(f + FORECAST_INTERVAL);
         }
@@ -727,7 +735,16 @@ impl<'a, F: Fn(HaEvent)> Session<'a, F> {
             self.webhook(&payload, Pending::RegisterSensor { generation })?;
         }
         self.last_diagnostics = Instant::now();
+        self.last_charging_status = d.charging_status;
         Ok(())
+    }
+
+    fn send_diagnostics(&mut self) -> Result<()> {
+        self.last_diagnostics = Instant::now();
+        let d = diagnostics::collect();
+        debug!("diagnostics: {d:?}");
+        self.last_charging_status = d.charging_status.clone();
+        self.webhook(&mobile_app::update_sensors_payload(&d), Pending::UpdateSensors)
     }
 
     fn webhook(&mut self, payload: &Value, pending: Pending) -> Result<()> {
@@ -762,11 +779,15 @@ impl<'a, F: Fn(HaEvent)> Session<'a, F> {
             self.fetch_registry()?;
         }
         let interval = Duration::from_secs(self.opts.ha.diagnostics_interval_secs.max(10));
-        if self.last_diagnostics.elapsed() >= interval {
-            self.last_diagnostics = Instant::now();
-            let d = diagnostics::collect();
-            debug!("diagnostics: {d:?}");
-            self.webhook(&mobile_app::update_sensors_payload(&d), Pending::UpdateSensors)?;
+        // The charging status is checked once a minute, and a change is sent straight away
+        // rather than left until the next scheduled update.
+        let mut charging_changed = false;
+        if self.last_charging_check.elapsed() >= CHARGING_CHECK_INTERVAL {
+            self.last_charging_check = Instant::now();
+            charging_changed = diagnostics::charging_status() != self.last_charging_status;
+        }
+        if self.last_diagnostics.elapsed() >= interval || charging_changed {
+            self.send_diagnostics()?;
         }
         Ok(())
     }

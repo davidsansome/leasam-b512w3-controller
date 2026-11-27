@@ -6,7 +6,8 @@
 url = "http://192.168.1.10:8123"
 # Long-lived access token: HA → your profile → Security → Long-lived access tokens.
 token = "PASTE-TOKEN-HERE"
-# How often battery level, uptime and Wi-Fi signal are sent to HA.
+# How often battery level, charging status, uptime and Wi-Fi signal are sent to HA.
+# (A change in charging status is also sent within a minute.)
 diagnostics_interval_secs = 300
 
 [device]

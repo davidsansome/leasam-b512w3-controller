@@ -110,34 +110,42 @@ pub fn register(base: &HttpBase, token: &str, device: &DeviceConfig, device_id: 
 struct Sensor {
     unique_id: &'static str,
     name: &'static str,
-    device_class: &'static str,
-    unit: &'static str,
+    device_class: Option<&'static str>,
+    unit: Option<&'static str>,
     icon: &'static str,
     state_class: Option<&'static str>,
 }
 
-const SENSORS: [Sensor; 3] = [
+const SENSORS: [Sensor; 4] = [
     Sensor {
         unique_id: "battery_level",
         name: "Battery level",
-        device_class: "battery",
-        unit: "%",
+        device_class: Some("battery"),
+        unit: Some("%"),
         icon: "mdi:battery",
         state_class: Some("measurement"),
     },
     Sensor {
+        unique_id: "charging_status",
+        name: "Charging status",
+        device_class: None,
+        unit: None,
+        icon: "mdi:battery-charging",
+        state_class: None,
+    },
+    Sensor {
         unique_id: "uptime",
         name: "Uptime",
-        device_class: "duration",
-        unit: "s",
+        device_class: Some("duration"),
+        unit: Some("s"),
         icon: "mdi:timer-outline",
         state_class: None,
     },
     Sensor {
         unique_id: "wifi_signal",
         name: "Wi-Fi signal",
-        device_class: "signal_strength",
-        unit: "dBm",
+        device_class: Some("signal_strength"),
+        unit: Some("dBm"),
         icon: "mdi:wifi",
         state_class: Some("measurement"),
     },
@@ -146,6 +154,7 @@ const SENSORS: [Sensor; 3] = [
 fn sensor_state(d: &Diagnostics, unique_id: &str) -> Value {
     match unique_id {
         "battery_level" => json!(d.battery_percent),
+        "charging_status" => json!(d.charging_status),
         "uptime" => json!(d.uptime_secs),
         "wifi_signal" => json!(d.wifi_dbm),
         _ => Value::Null,
@@ -161,12 +170,16 @@ pub fn register_sensor_payloads(d: &Diagnostics) -> Vec<Value> {
                 "type": "sensor",
                 "unique_id": s.unique_id,
                 "name": s.name,
-                "device_class": s.device_class,
-                "unit_of_measurement": s.unit,
                 "icon": s.icon,
                 "entity_category": "diagnostic",
                 "state": sensor_state(d, s.unique_id),
             });
+            if let Some(dc) = s.device_class {
+                data["device_class"] = json!(dc);
+            }
+            if let Some(unit) = s.unit {
+                data["unit_of_measurement"] = json!(unit);
+            }
             if let Some(sc) = s.state_class {
                 data["state_class"] = json!(sc);
             }
@@ -291,13 +304,24 @@ mod tests {
 
     #[test]
     fn sensor_payloads() {
-        let d = Diagnostics { battery_percent: Some(80), uptime_secs: Some(60), wifi_dbm: None };
+        let d = Diagnostics {
+            battery_percent: Some(80),
+            charging_status: Some("Not charging".into()),
+            uptime_secs: Some(60),
+            wifi_dbm: None,
+        };
         let regs = register_sensor_payloads(&d);
-        assert_eq!(regs.len(), 3);
+        assert_eq!(regs.len(), 4);
         assert_eq!(regs[0]["data"]["state"], json!(80));
+        assert_eq!(regs[0]["data"]["unit_of_measurement"], json!("%"));
         assert_eq!(regs[0]["data"]["entity_category"], json!("diagnostic"));
-        assert!(regs[1]["data"].get("state_class").is_none());
+        let status = &regs[1]["data"];
+        assert_eq!(status["state"], json!("Not charging"));
+        assert!(status.get("device_class").is_none());
+        assert!(status.get("unit_of_measurement").is_none());
+        assert!(regs[2]["data"].get("state_class").is_none());
         let upd = update_sensors_payload(&d);
-        assert_eq!(upd["data"][2]["state"], Value::Null);
+        assert_eq!(upd["data"][1]["state"], json!("Not charging"));
+        assert_eq!(upd["data"][3]["state"], Value::Null);
     }
 }

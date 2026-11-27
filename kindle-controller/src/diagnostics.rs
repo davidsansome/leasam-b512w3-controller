@@ -1,8 +1,12 @@
-//! Device health reported to HA: battery level, uptime and Wi-Fi signal strength.
+//! Device health reported to HA: battery level and charging status, uptime and Wi-Fi signal
+//! strength.
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Diagnostics {
     pub battery_percent: Option<u8>,
+    /// The battery's status as sysfs reports it: "Charging", "Discharging", "Full",
+    /// "Not charging" or "Unknown".
+    pub charging_status: Option<String>,
     pub uptime_secs: Option<u64>,
     pub wifi_dbm: Option<i32>,
 }
@@ -10,6 +14,7 @@ pub struct Diagnostics {
 pub fn collect() -> Diagnostics {
     Diagnostics {
         battery_percent: battery_percent(),
+        charging_status: charging_status(),
         uptime_secs: std::fs::read_to_string("/proc/uptime").ok().and_then(|t| parse_uptime(&t)),
         wifi_dbm: std::fs::read_to_string("/proc/net/wireless").ok().and_then(|t| parse_wireless(&t)),
     }
@@ -19,11 +24,16 @@ pub fn collect() -> Diagnostics {
 pub fn battery_status() -> (Option<u8>, bool) {
     // The battery's own status, not powerd's isCharging: powerd says "charging" whenever
     // USB power is present, even while the charger is suspended and the battery drains.
-    let charging = match battery_sysfs("status") {
+    let charging = match charging_status() {
         Some(s) => s == "Charging",
         None => crate::lipc::get_int("com.lab126.powerd", "isCharging").is_some_and(|v| v != 0),
     };
     (battery_percent(), charging)
+}
+
+/// The battery's own status from sysfs (see [`Diagnostics::charging_status`]).
+pub fn charging_status() -> Option<String> {
+    battery_sysfs("status")
 }
 
 /// A file from the first battery under `/sys/class/power_supply`, trimmed.
