@@ -121,12 +121,51 @@ The scope's `.bin` save files contain no waveform data. All were identical: 805 
 | Running | 90–100 mA (unreliable, see below) |
 
 ### Observations
-- **With the meter in series, the running test failed:** the display showed **"E-C"** and the compressor switched off. The meter's shunt resistance in series with POWER is the likely cause (see guesswork). The meaning of "E-C" is unknown; no Leasam error-code list was found.
+- **With the meter in series, the running test failed:** the display showed **"E-C"** and the compressor switched off. "E-C" is the pad's **no-flow error** (§4). Why the meter triggered it is guesswork (§5).
 - **Earlier, probing the line with a multimeter** sometimes made the aircon turn on or the controller show an error. This was recorded before we knew which wire was which.
 
 ---
 
-## 4. Guesswork – NOT verified
+## 4. Pump interlock and AUX (measured 2026-11-27)
+
+### Building pump interlock
+- The building has a central condenser-water pump with a **pump interlock relay module** (Leasam catalogue, 17 March 2003). It runs three wires to every unit:
+
+| Wire | Function |
+|---|---|
+| COMMON | DC − |
+| CALL | Unit pulls it to COMMON to start the pump (via RL2 in the interlock module) |
+| VERIFY | **+24 V via RL1 once the flow switch proves water flow** |
+
+- Supply is **24 V DC, unregulated and unsmoothed** (transformer + bridge). Measured **~22 V DC**.
+- In the catalogue diagram, VERIFY drives an opto on each unit's relay module that gates COOL IN/COOL OUT.
+- A meter on AC volts showed ~48 V AC on VERIFY. That's a meter artefact (half-wave ACV range on DC reads ×2.22): with the leads reversed it read 0 V AC. **VERIFY is DC only.**
+
+### VERIFY wiring at this unit
+- VERIFY reaches the module through an **inline fuse holder** (screw cap) on a heavy red lead, joined to a thin white riser wire with a screw-cap connector.
+- Fuse: **F300mA 250V glass, 6.3 × 32 mm (3AG)**.
+- Purpose: a fault in this unit's VERIFY wiring blows this fuse instead of pulling down the shared VERIFY line for the whole building.
+- **Pulling the fuse is the clean way to disconnect VERIFY** for testing.
+
+### AUX with VERIFY removed
+Test: fuse pulled (no flow verify), CALL still connected (so the pump ran and water was flowing; the compressor did not run dry).
+
+Readings are the replacement breadboard's (stage 2) calibrated AUX, i.e. the AUX terminal voltage to within ~±0.1 V.
+
+| VERIFY | AUX |
+|---|---|
+| present (fuse in) | **1.31 V steady** in every state seen (off, fan only, compressor running) across the HA history |
+| removed (fuse out) | **0.56 V**: mean, min and max identical (no hum, no clipping) |
+
+- 0.56 V at AUX is ~0.14 V at the ESP32 pin, at the low edge of its ADC's accurate range.
+- → **AUX reports flow-verify status from the module back to the pad.**
+- With the fuse pulled, the module **still let the compressor start** when commanded. **The module doesn't enforce the flow interlock; the pad does**, by reading AUX.
+- **"E-C" is the original pad's no-flow error.** The user has seen it on past occasions when the building's pump stopped.
+- The replacement firmware has a matching **no-flow interlock**: AUX below ~0.9 V for a few seconds stops the compressor and fan (whole unit idle), published as binary_sensor "No flow".
+
+---
+
+## 5. Guesswork – NOT verified
 
 These are interpretations. None have been confirmed by tracing or a targeted test.
 
@@ -134,10 +173,9 @@ These are interpretations. None have been confirmed by tracing or a targeted tes
 - **The pad transmits to the relay module by pulling POWER low through Q2/R4.** The topology fits, but no capture yet shows Q2's drive (R6 / U6 pin 12) alongside the POWER dips.
 - Q2 pin roles are assumed from the standard SOT-23 BJT layout: middle = collector, top = emitter, bottom = base.
 - The source resistance itself is measured (§3). What isn't explained: with ≈ 20 Ω behind 19 V, the pad's 3.3 Ω pulse should only pull the line to ≈ 2.7 V, but the scope showed ≈ 1.3 V. Possible explanations: the source is softer for short pulses (e.g. inductance or a series resistor after a capacitor), or the screenshot ground reference is slightly off.
-- **"E-C" is probably a communication error.** A meter on a mA range adds several ohms in series, so the pad's pulses would reach the module much shallower (e.g. ≈ 7–8 V instead of ≈ 2–3 V with a 10 Ω shunt), causing missed or corrupt frames. The meaning of the code is not confirmed.
+- **The "E-C" while the meter was in series (§3) was probably the meter dragging AUX low.** E-C is the no-flow error (§4), so the pad most likely saw a low AUX, not a communication fault. The meter loading AUX/POWER would drag the AUX reading down towards the no-flow level. Not tested.
 - The ~10 mA rise in the pad's draw when running is probably its extra display LEDs. It's unconfirmed because of the meter problem above.
-- **AUX is probably the return channel (module → pad)**, read by the ADC on PD4. Its meaning is unknown: serial data, a multi-level status, a remote on/off or fault input, or a sensor. It has the same circuit shape as the SENS inputs. The pad itself cannot drive AUX hard. At most it could pull to ~2.5 V via PD4 and R55.
-- Loading AUX (e.g. with a multimeter) probably shifts the voltage the ADC sees. That would explain the controller erroring or the aircon turning on when probing.
+- **AUX is the return channel (module → pad)**, read by the ADC on PD4. It carries at least the **flow-verify status** (§4). Whether it carries anything else (other faults, more levels) is unknown. It has the same circuit shape as the SENS inputs. The pad itself cannot drive AUX hard. At most it could pull to ~2.5 V via PD4 and R55.- Loading AUX (e.g. with a multimeter) probably shifts the voltage the ADC sees. That would explain the controller erroring or the aircon turning on when probing.
 - Both protocol pins are plain GPIO/ADC, so the timing is probably generated in software (consistent with the slow ms-scale gaps).
 
 ### Meaning of the bits
@@ -161,11 +199,10 @@ These are interpretations. None have been confirmed by tracing or a targeted tes
 
 ---
 
-## 5. Open questions / next steps
+## 6. Open questions / next steps
 - Measure the pad's **running current** without disturbing the signalling: use a 1 Ω resistor in series and read the voltage across it in mV or on the scope.
 - Check whether the module tolerates **> 100 mA for long periods** (e.g. 150 Ω for 10–15 min, feeling for warm parts).
 - Capture **R6 / U6 pin 12** on CH2 alongside POWER to confirm the dips are the pad's.
-- Capture **AUX** (scope, not logic analyser) during state changes to find out what the module sends back.
-- Find states that set **bits 2 and 3**.
+- ~~Find out what AUX carries.~~ At least flow-verify status (§4). Still worth a scope capture of **AUX** during state changes to check for anything else.- Find states that set **bits 2 and 3**.
 - Measure the AUX voltage with only the relay module connected, to see whether the module also pulls it up.
 - Optionally check P2 → U6 continuity against the ST7 ICC pins.
