@@ -1,0 +1,138 @@
+blueprint:
+  name: Tablet charging
+  description: >-
+    Controls the ESP32 aircon controller's "Tablet output" switch to keep a wall-mounted
+    Kindle or tablet battery between a low and high charge threshold, avoiding keeping a
+    Li-Po battery pinned at 100% 24/7.
+
+
+    Turns the output on at or below the low threshold, and off at or above the high
+    threshold. Fails safe to on if the battery sensor is unavailable or stops reporting
+    (since mobile_app sensors keep their last value rather than going unavailable). Also
+    re-checks every 10 minutes, on Home Assistant startup, and whenever the switch changes
+    state (for example, after an ESP32 reboot, which resets Tablet output to on). Disable
+    the automation if you want to override the switch manually outside the configured band.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    battery_sensor:
+      name: Tablet battery sensor
+      description: >-
+        Battery level sensor for the Kindle or tablet (for example, from the Aircon Wall
+        Controller mobile_app device).
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: battery
+    tablet_switch:
+      name: Tablet output switch
+      description: The ESP32 aircon controller's "Tablet output" switch.
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: mqtt
+    low_threshold:
+      name: Start charging at or below
+      description: >-
+        Turn the tablet output on when the battery drops to this level (%). For a Kindle
+        Paperwhite on the tablet board (~+50 mA net charge rate), 40% leaves a comfortable
+        buffer.
+      default: 40
+      selector:
+        number:
+          min: 10
+          max: 60
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    high_threshold:
+      name: Stop charging at or above
+      description: >-
+        Turn the tablet output off when the battery reaches this level (%). Stopping around
+        75–80% avoids holding the battery at full voltage continuously.
+      default: 75
+      selector:
+        number:
+          min: 65
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    stale_minutes:
+      name: Fail-safe stale timeout
+      description: >-
+        Turn the tablet output on if the battery sensor hasn't reported for this many
+        minutes, so a crashed or disconnected tablet doesn't drain to empty while charging
+        is off. Keep this at least 3× the Kindle's diagnostics_interval_secs (5 min by
+        default).
+      default: 30
+      selector:
+        number:
+          min: 15
+          max: 1440
+          step: 5
+          unit_of_measurement: "min"
+          mode: box
+
+mode: restart
+
+triggers:
+  - trigger: state
+    entity_id: !input battery_sensor
+  # Also catches an ESP32 reboot, where Tablet output defaults back to on.
+  - trigger: state
+    entity_id: !input tablet_switch
+    not_to:
+      - unavailable
+      - unknown
+  # Heartbeat to catch a stale mobile_app sensor (which stays at its last value rather
+  # than going unavailable when the tablet drops offline).
+  - trigger: time_pattern
+    minutes: "/10"
+  - trigger: homeassistant
+    event: start
+
+variables:
+  battery_sensor: !input battery_sensor
+  tablet_switch: !input tablet_switch
+  low: !input low_threshold
+  high: !input high_threshold
+  stale_minutes: !input stale_minutes
+  battery_raw: "{{ states(battery_sensor) }}"
+  switch_state: "{{ states(tablet_switch) }}"
+  battery_stale: >-
+    {%- set s = states[battery_sensor] -%}
+    {{ s is none or not is_number(s.state) or s.last_reported is none or (now() - s.last_reported).total_seconds() > (stale_minutes | float) * 60 }}
+
+conditions:
+  - condition: template
+    value_template: "{{ switch_state in ['on', 'off'] }}"
+  - condition: template
+    value_template: "{{ (low | float) < (high | float) }}"
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ battery_stale and switch_state != 'on' }}"
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: !input tablet_switch
+      - conditions:
+          - condition: template
+            value_template: "{{ not battery_stale and (battery_raw | float) <= (low | float) and switch_state != 'on' }}"
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: !input tablet_switch
+      - conditions:
+          - condition: template
+            value_template: "{{ not battery_stale and (battery_raw | float) >= (high | float) and switch_state != 'off' }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input tablet_switch

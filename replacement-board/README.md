@@ -12,6 +12,7 @@ Two boards replace the Leasam B512W3 wall pad:
 | `firmware/aircon_controller/aircon_controller.ino` | ESP32 firmware, for both this board and the breadboard prototype |
 | `firmware/aircon_controller/thermostat.h`, `firmware/thermostat_test/` | the thermostat's decisions, and host-side checks for them |
 | `home-assistant/blueprints/aircon_rooms.yaml` | HA blueprint that gives the thermostat its rooms and their temperatures |
+| `home-assistant/blueprints/tablet_charging.yaml` | HA blueprint that switches the tablet output on/off between battery thresholds |
 | `kicad/esp32-board/` | KiCad project, designator map and netlist for board 1 |
 | `kicad/tablet-board/` | KiCad project, designator map and netlist for board 2 |
 | `case/` | 3D-printable case for board 1 |
@@ -178,6 +179,12 @@ The Home Assistant entities for the tablet output:
 - **Tablet output status:** text, such as "On", "Waiting: VRES settling", "Shed: VRES low" or "Fault: output low".
 - **Tablet output voltage:** the 10 s mean.
 - **Tablet output sheds** and **Tablet output faults:** counts since boot.
+
+**Automated charging limits:** to avoid holding a wall-mounted Li-Po battery at 100% continuously, use the *Tablet charging* blueprint, [`home-assistant/blueprints/tablet_charging.yaml`](home-assistant/blueprints/tablet_charging.yaml) (needs HA 2024.10 or later). It switches **Tablet output** on when the battery sensor drops to or below the low threshold, and off at or above the high threshold. It also re-checks on HA startup, every 10 minutes, and whenever **Tablet output** changes state (so an ESP32 reboot, which resets the output to on, won't charge past the high threshold). If the battery sensor is unavailable or stops reporting, it fails safe and turns **Tablet output** back on within about 10 minutes of the stale timeout (default 30 min; keep this at least 3× the Kindle's `diagnostics_interval_secs`, which defaults to 5 min) so the wall panel can't drain to empty unattended.
+
+- **Suggested thresholds for the Kindle Paperwhite 10th gen:** **40%–75%** (the blueprint's defaults; up to **80%** if you want a bit more outage reserve). Stopping at 75–80% reduces Li-Po calendar aging and swelling risk, while starting at 40% leaves plenty of buffer for the tablet board's slow ~+50 mA net charge rate (~3%/hr).
+- **Manual overrides & outages:** disable the automation if you want to override **Tablet output** manually outside the configured band. Note also that the ESP32 itself keeps its last `Tablet output` state while HA/MQTT is unreachable, so a prolonged HA outage while the output is off won't resume charging until HA returns or the ESP32 reboots.
+- **To add it:** copy `tablet_charging.yaml` to `config/blueprints/automation/aircon/` in HA (or import its raw URL under *Settings → Automations & scenes → Blueprints → Import blueprint*), reload automations, and create an automation picking the Kindle's **Battery level** sensor and the Aircon's **Tablet output** switch.
 
 AUX, VRES and the tablet output are sampled at ~1 kHz. Every 10 s the firmware publishes the mean, plus the lowest and highest single sample (AUX minimum/maximum, VRES minimum), so short dips and spikes still show up. Home Assistant's history serves as the AUX log, for spotting rare events such as a defrost or a fault. The AUX ratio on this board hasn't been calibrated against a meter yet.
 
